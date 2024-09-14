@@ -64,7 +64,7 @@ def main [command: string, --depset (-d): string]: nothing -> nothing {
 		prt '------------------------------------------------------------------'
 			
 		# $env.DEPMAN.dependencies = $dep_paths
-	} 
+	}
 	ignore
 }
 
@@ -152,7 +152,7 @@ def create_command []: record<name: string, source: table, dir: path> -> record<
 	$input.source.0
 	| {$in.type: $in.value}
 	| match $in {
-		{repo: $repo} => {
+		{git: $repo} => {
 			let ref = [$repo.commit? $repo.branch?] | where $it != null | get -i 0
 			if $ref != null {
 				{ 
@@ -166,7 +166,7 @@ def create_command []: record<name: string, source: table, dir: path> -> record<
 				}
 			}
 		},
-		{get: {url: $url, redirect-mode: $redirect_mode}} => {
+		{http: {url: $url, redirect-mode: $redirect_mode}} => {
 			let redirect_mode: string = $redirect_mode | default 'error'
 			closure: { http get --redirect-mode '($redirect_mode)' ($url) | save -f ($dep_dir) },
 			str: $"http get --redirect-mode '($redirect_mode)' '($url)' | save -f '($dep_dir)'"
@@ -252,7 +252,7 @@ def parse_deps []: record -> table<name: string, depsets: table> {
 		let alt_depset_keys = (
 			$dep.depsets
 			| columns
-			| filter {|key| $key not-in [get repo path rsync cmd depman-cmd]}
+			| filter {|key| $key not-in [http git path rsync cmd depman-cmd]}
 		)
 		let alt_depsets = (
 			if ($alt_depset_keys | is-not-empty) { 
@@ -281,7 +281,7 @@ def parse_deps []: record -> table<name: string, depsets: table> {
 			}
 		)		
 		$depsets
-	} 
+	}
 }
 
 def check_deps [deps: any] nothing -> nothing {
@@ -300,7 +300,7 @@ def check_deps [deps: any] nothing -> nothing {
 				1 => {
 					let source = $depset.source.0
 					match $source.type {
-						'repo' => { 
+						'git' => { 
 							let repo = $source.value
 							if $repo.url? == null {
 								error $'You specified a repo source($depset_str) in dependency "($dep.name)" but did not specify a remote url.'
@@ -309,7 +309,7 @@ def check_deps [deps: any] nothing -> nothing {
 								error $'You specified both commit and branch in the repo source($depset_str) in dependency "($dep.name)". You can only specify one.'
 							}
 						},
-						'get' => {
+						'http' => {
 							let get = $source.value
 							if $get.url? == null {
 								error $'You did not specify the URL to HTTP/S GET($depset_str) in dependency "($dep.name)"'

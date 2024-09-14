@@ -1,146 +1,226 @@
-# Depman
+#### Caution!
+This project is currently in alpha stage and many of the features described here are not implemented yet.
 
-## Overview
+## What is Depman?
 
-All files exist in the `depman/` directory relative to the current directory.
+Depman is the simplest possible:
+- Project dependency manager
+- Build system
+- Command/test runner
+- CI/CD system
 
-- `config.toml` specifies configuration options. (optional)
-- `dependencies.toml` specifies your dependencies. (optional)
-- `build.nu` file is a Nushell script. This is where you define build/test/run commands to be executed by depman.
-- `dependencies.lock` is the lockfile used to pin dependencies with their content hashes. This file is not meant to be edited by the user.
+It can replace (or build upon) tools as diverse as Make, Meson, Travis, GH Actions, Just, Bazel or Dagger.
 
-For security, depman executes all commands in a podman container. 
+## Features
+- General purpose: No assumptions about language, project type, ecosystem, or tooling.
+- Flexible: You 'just write a shell script'. There is no DSL or programming language besides Nu.
+- Interoperable with any other tool: Depman does everything in a single self contained 'depman/' directory.
+- Secure: Everything is fully isolated from your system with rootless containers.
+- Reproducible: Every input/dependency is pinned with its content hash, including the container and Depman itself. Every input can be signed too.
+- Fast: Caches everything.
+- Cross-platform: Works on Linux, MacOS and *uh... wait a sec, do people still use Windows? Let me check...* and Windows.
+- Backwards & forwards compatible: Everything runs in a container, so any version of Depman can build a project using any version of Depman.
+- Modern: Written in Nushell, a statically typed, compiled, mostly functional cross-platform shell and programming language written in Rust.
 
-Depman execution is as follows:
-1. Depman command creates a podman container and puts the project directory inside.
-2. Inside the podman container, the depman script that does the actual job is automatically downloaded and executed. By downloading the script version that matches the one project uses, perfect backwards & forwards compatibility is achieved without security holes and in completely transparent to the user.
+### Values
+Ordered by priority:
 
-## dependencies.toml
+1. Security: Depman will warn you and not proceed if any your dependencies have changed a single bit. It will never auto-update dependencies.
+2. Minimalism:
+    - In behavior: The usage manual (following two sections in this file) should never exceed 5 minutes in reading time.
+    - In implementation: The total LoC should always remain below 1000.
+3. Convenience: Wherever isn’t incompatible with the above values, we pursue the most convenient UX.
 
-Dependencies are specified in depman.toml file. Dependencies are referenced by the user by name. Possible keys for a dependency:
-- `url`: https retrieve.
-- `repo`: git clone retrieve.
-	- `repo.url` = git url.
-	- `repo.commit` = specific commit hash.
-	- `repo.branch` = specific branch.
-- `path`: path in the local filesystem, retrieved with `cp`. If the path points
-	to a directory, entire directory is used.
-- `rsync`: rsync retrieve url.
-- `cmd`: nushell command with output directory given in an environment variable.
-- `depman-cmd` = Depman build command to execute. By default doesn't execute
-	depman commands in dependencies.
+## The files
 
-Every dependency supports arbitrarily named depsets, specified during command
-execution: `linux`, `windows`, `new-branch`, `arm`, `dev`, `test`, etc.
+All files `depman` uses are in the self-contained `depman/` directory. You can place it anywhere.
 
-## config.toml
+```
+my-project/
+  depman/
+    config.toml
+    dependencies.toml
+	dependencies.lock
+    build.nu
+	build/
+    cache/
+```
 
-#### \[depman\]
+- `config.toml` (optional) specifies project configuration. 
+- `dependencies.toml` (optional) specifies your dependencies.
+- `build.nu` is a Nushell script. This is where you define build/test/run/install/whatever commands that will be executed by depman when you run `depman build/test/run/whatever`. These commands are Nushell custom commands.
+- `dependencies.lock` is the lockfile used to pin dependencies with their content hashes. It's not meant to be changed by the user.
+- `cache/` is the directory where dependencies are cached.
+- `build/` is where the artifacts go.
 
-- `out-dir`: output directory. Default: `./depman/`
-- `cache-dir`: caching directory. Default: `<$out_dir>/cache`
-- `default-cmd`: The default user-defined command to execute, when no command name is given as argument.
+### `dependencies.toml`
 
-#### \[commands\]
-- `<name>.out-dir`: if given, named command uses this out-dir. Default:
-	`./<name>`. If a depset it used, default is: `<name>_<depset>`.
-- `<name>.fresh-start`: clean the out-dir before execution for the
-	command. Default: true
+Dependencies are specified here. Say you are writing the best text editor in the world:
+```toml
+[builtin-plugins]
+# Repository to `git clone`.
+git.url = 'https://github.com/editor/builtin-plugins'
+# (optional) Specific branch.
+git.branch = 'release'
 
-#### \[depsets\]
-- `<name>.lock`: A boolean indicating whether a lockfile will be used for dependencies in 
-this variation, when that variation is being used. Default: true
-- `<name>.lock-list`: If this depset is not locked by default, make an exception for these dependencies and lock them. Default: `[]`
-- `<name>.no-lock-list`: Don't lock the given dependencies. In order to use this key, `<name>.lock` must be set to false. Default: `[]`
-- `<name>.pass-default`: Pass default depset. Default: true
+[community-plugins]
+git.url = 'https://github.com/editor/community-plugins'  
+# (optional) Specific commit hash.
+git.commit = '421fb6f8'
 
-## dependencies.lock
+# What if your community-plugins repo is also using Depman to build the plugins?
+depman-cmd = 'release'
+# This will execute `depman release` in the dependency directory after it's obtained.
 
-The file locking source hashes to directory contents hashes.
-Depman refuses to proceed and warns the user, showing all changes in the different versions if there's any change in the dependencies.
+[themes]
+# URL to download with HTTP/S GET request
+http.url = 'https://github.com/editor/community-themes/archive/main.tar.gz' 
+# (optional) follow` or `error`. Default: `error`.
+http.redirect-mode = 'follow' 
+
+[tutorial-video]
+# Local path copied with `cp`.
+path = '~/editor-assets/tutorial-linux.mp4'
+# You can specify different dependency sets and different sources for each dependency set (depset). Here's how.
+# For this dependency, this path will be used instead of the default path when you run `depman build macos`:
+macos.path = '~/editor-assets/tutorial-macos.mp4'
+# And this path will be used when you run `depman build windows`:
+windows.path = '~/editor-assets/tutorial-windows.mp4'
+
+# For every dependency, the source specified without a depset prefix is in the depset named 'default'.
+
+[image-helper]
+# Command to execute in nushell, with output directory given in the $out_dir environment variable.
+cmd = 'cd ./image-helper; cargo build --release --root $env.out_dir'
+windows.cmd = 'cd ./image-helper; cargo build --release --root $env.out_dir --target x86_64-pc-windows-gnu'
+macos.cmd = 'cd ./image-helper; cargo build --release --root $env.out_dir --target x86_64-apple-darwin'
+
+# Another depset solely for developing it (compile without --release optimizations)
+helper-dev.cmd = 'cd ./image-helper; cargo build --root $env.out_dir'
+
+[download-stats]
+# rsync source.
+rsync = 'user@best-text-editor.com:/data/download-stats.csv'
+```
+
+You've just learned the full dependency specification. There's nothing more to it!
+
+### `config.toml`
+
+This file is entirely optional.
+
+```toml
+[depman]
+# Output directory for commands. Default: './depman/build/'.
+out-dir = './build/'
+
+# Caching directory. Default: './depman/cache'
+cache-dir = '~/.cache/'
+
+# The default user-defined command to execute, when no command name is given as argument. Default: none.
+default-cmd = 'build'
+
+[commands]
+# The output directory for the command to use. Default: './depman/build/<command_name>'
+# If a depset is used, default is: './depman/build/<command_name>_<depset_name>'
+release.out-dir = '/usr/bin/editor'
+test.out-dir = '/usr/bin/editor-unstable'
+
+# Whether to clean the out-dir before the execution. Default: true
+test.fresh-start = false
+
+[depsets]
+# Whether to use the lockfile for dependencies in this depset.
+dev-branch.lock = false
+
+# If this depset is not locked by default, make an exception for these dependencies and lock them
+dev-branch.lock-list = [ 'themes', 'image-helper' ]
+
+# Don't lock the given dependencies. In order to use this key, lock value must be true for the depset.
+default.no-lock-list = [ 'community-plugins' ]
+
+# The dependencies to include in the depset. By default a depset includes all 
+# dependencies, even those which don't have a specified source for the depset. 
+# Those dependencies' default source will be used instead.
+helper-dev.deps = [ 'image-helper' ] # We don't need other dependencies when developing image-helper.
+
+# You can specify a dependency blacklist for a depset too.
+windows.no-deps = [ 'themes' ] # Windows users don't like customization.
+# They will feel right at home with the default white on blue theme.
+
+```
+
+### `dependencies.lock`
+
+The file containing source hashes to directory contents hashes.
+If there's a single bit of change in the dependencies, Depman refuses to proceed and warns the user, showing the changes between in the different versions.
 Depman itself is also pinned in this file.
 
-## build.nu
+### `build.nu`
 
-All environment variables are cleared before `build.nu` is executed, except $env.HOME, $env.DISPLAY and $env.USER. This is to reduce dependence on the environment and to facilitate explicit acquiring of all dependencies.
+This is the file where you define [custom commands](https://www.nushell.sh/book/custom_commands.html) to be executed
+
+All environment variables are cleared before `build.nu` is executed, except `$env.HOME`, `$env.DISPLAY` and `$env.USER`. This is to reduce dependence on the environment and to encourage explicit acquiring of all dependencies.
 
 The build command is executed with two arguments:
-```nu
-depman build $dep_dirs $source_dir
+```depman build <dep_dirs> <source_dir>```
+
+- `$dep_dirs`: The table containing dependency name - path pairs.
+- `$source_dir`: The source directory (the parent directory of `depman/`)
+
+Working directory is set to the output directory of the command.
+
+## Usage
+
+```
+depman {flags} <command> ...(depsets)
 ```
 
-- `$dep_dirs`: A record of {dependency-name: directory} pairs.
-- `$source_dir`: The source directory (the directory depman was run from, which is usually the top directory in a repository.)
+1. Find the closest `depman/` directory, searching upwards from the current directory.
+2. Create a rootless container and mount the source directory (parent directory of `depman/`) into the container. The rest of the process from here runs entirely inside the container.
+3. Acquire dependencies specified in `dependencies.toml`. If a dependency set (depset) is given obtain only the dependencies in the specified depset.
+4. Execute the `<command>` you defined in `build.nu`, passing it the acquired dependencies' paths, once for every depset given.
+5. That's it!
 
-Working directory of is set to the output directory of the command, which is by default set to `<command>` in the depman output directory.
+### Flags
 
-After `depman.toml` is evaluated and dependencies are retrieved, `depman`
-command executes the function in `depman.nu` with the given name.
+-	`--watch`
+	
+	Watch the source directory (the parent directory of `depman/`) and re-execute the command whenever any file inside changes. 
 
-## Options
+-	`--dir <path_to_dir>`
+	
+	Use the specified directory as the `depman/` directory instead of the automatically discovered one.
 
-```nu
-depman --cache <dir> <name>
-```
+-	`--overlay <path_to_dependencies_toml | record>`
+	
+	Merge either the given `dependencies.toml` file or the record with the current `dependencies.toml`. The values in the given file/record will overwrite the fields in the current `dependencies.toml`.
 
-Caches the given directory with the given name. For use in `depman.nu`.
+-	`--help`
+	
+	Show the help text.
 
-```nu
-depman --retrieve <name> <dir>
-```
-Retrieve the previously cached directory from its name to the specified directory. For use in `depman.nu`.
+### Subcommands
+-	`depman cache <item> <name>`
+	
+	Cache the given directory or file with the given name. You can use this command to manually cache stuff in your commands.
 
-```nu
-depman --config <path_to_depman.toml>
-```
-Use an alternate `depman.toml` file.
+-	`depman retrieve <name> <dir>`
+	
+	Retrieve a directory cached with `depman cache` with its name to the specified directory.
 
-```nu
-depman --overlay <path_to_overlay | record
-```
-Merges either a depman.toml file or a record over the current `depman.toml`. The fields in the given file/record will overwrite the fields in the current `depman.toml`.
-
-```nu
-depman --help
-```
-
-Shows the help text.
-
-## Commands
-
-- `depman init`: Creates a depman.toml file in the current directory.
-- `depman`: Shows the help text.
-- `depman watch`: Watches the dependencies specified in a given variation, and when there's any change executes the given command for that variation.
-- `depman <command> ...<devset_name>`: Executes a user-defined command in build.nu once for every depset given.
+-	`depman init`: Create an example `depman/` directory in the current directory.
 
 ## FAQ
 
-### Why is using bash scripts for build tasks etc. not supported?
+### Why is using a bash based build.sh not supported?
 Please take a look at your calendar.
+
+### Why did you create this?
+I was building a complex project for a client which started small but soon required a build system. There were many moving parts, C sources to compile, binaries to bundle, static assets to include. Reliability and reproducibility was a requirement. I evaluated the current mainstream build tools: Bazel, Nix, Make, Dagger, Meson, etc. All of them are either too complex, too inconvenient or too inflexible for the job. So I decided to build a zero learning curve, fully general purpose, zero bloat minimal build tool.
 
 ## Contributing
 
-The project is not open to contributions until I finish the stuff in the TODO list below.
-After that, please discuss with me before making a PR. I consider this project to be very limited in scope and very minimalistic. Whatever is in the initial release probably won't change much. It's not meant to replace or substitute Nix. It's like the little brother of Nix: far simpler and easier to use, but without all the convenience functions Nix offers to build everything ranging from Rust packages to OS images. Depman is also importantly won't ever be as deterministic as Nix, even though it tries really hard to be as deterministic and reproducible as possible.
+Please discuss with me before making a PR. I consider this project to be very limited in scope and very minimalistic. Whatever is in the initial release is not intended to change much. 
 
-## Notes to myself
-- Rootless podman inside rootless podman is possible and actually quite easy.
-- Should commands themselves be able to specify a default depset e.g. in the config file?
-
-## TODO
-
-- - [ ] Rearchitecture to use containers:
-	- - [ ] One small easily auditable widely compatible POSIX-sh part. 
-	Runs a rootless podman container with the project directory inside. 
-	- - [ ] The actual script running inside the container (spawning containers for build commands.)
-	- - [ ] Warn the user when a new depman version is released.
-	- - [ ] When downloading the nu script check it with the hardcoded signing key of me.
-- - [ ] --cache
-- - [ ] --retrieve
-- - [ ] --config
-- - [ ] --overlay
-- - [ ] --help text
-- - [ ] watch subcommand
-- - [ ] out
-- - [ ] commands.out-dir in config.toml
-- - [ ] commands.fresh-start in config.toml
+It's not meant to replace or substitute Nix. It's like the little brother of Nix: far simpler and easier to use, but without all the convenience functions Nix offers to build everything ranging from GUI apps to OS images.
