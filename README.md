@@ -1,5 +1,5 @@
 #### Caution!
-This project is currently in alpha stage and many of the features described here are not implemented yet.
+This project is currently in alpha stage and **most** of the features described here are not implemented yet.
 
 ## What is Depman?
 
@@ -9,31 +9,31 @@ Depman is the simplest possible:
 - Command/test runner
 - CI/CD system
 
-It can replace (or build upon) tools as diverse as Make, Meson, Travis, GH Actions, Just, Bazel or Dagger.
+It can replace (or build upon) tools as diverse as Make, Meson, Nix, Travis, GH Actions, Just, Bazel or Dagger.
 
 ## Features
-- General purpose: No assumptions about language, project type, ecosystem, or tooling.
-- Flexible: You 'just write a shell script'. There is no DSL or programming language besides Nu.
-- Interoperable with any other tool: Depman does everything in a single self contained 'depman/' directory.
-- Secure: Everything is fully isolated from your system with rootless containers.
-- Reproducible: Every input/dependency is pinned with its content hash, including the container and Depman itself. Every input can be signed too.
-- Fast: Caches everything.
-- Cross-platform: Works on Linux, MacOS and *uh... wait a sec, do people still use Windows? Let me check...* and Windows.
-- Backwards & forwards compatible: Everything runs in a container, so any version of Depman can build a project using any version of Depman.
-- Modern: Written in Nushell, a statically typed, compiled, mostly functional cross-platform shell and programming language written in Rust.
+- **General purpose**: No assumptions about language, project type, ecosystem, or tooling.
+- **Flexible**: You 'just write a shell script'. There is no DSL or programming language (besides Nushell).
+- **Interoperable**: Everything Depman does happens in a single self contained 'depman/' directory anywhere in your project.
+- **Secure**: Everything is fully isolated from your system with rootless containers.
+- **Reproducible (Repeatable)**: Every input/dependency is pinned with its content hash.
+- **Fast**: Caches as much as possible.
+- **Cross-platform**: Works on Linux, MacOS and Windows.
+- **Backwards & forwards compatible**: Any version of Depman can build a project using any version of Depman.
+- **Modern**: Written in Nushell, a statically typed, functionally oriented cross-platform shell and programming language written in Rust.
 
 ### Values
 Ordered by priority:
 
-1. Security: Depman will warn you and not proceed if any your dependencies have changed a single bit. It will never auto-update dependencies.
+1. Reliability & Security: Depman will warn you and not proceed if any your dependencies have changed a single bit. It will never auto-update dependencies.
 2. Minimalism:
-    - In behavior: The usage manual (following two sections in this file) should never exceed 5 minutes in reading time.
+    - In behavior: The usage manual (following two sections of this file) should never exceed 5 minutes in reading time.
     - In implementation: The total LoC should always remain below 1000.
 3. Convenience: Wherever isn’t incompatible with the above values, we pursue the most convenient UX.
 
 ## The files
 
-All files `depman` uses are in the self-contained `depman/` directory. You can place it anywhere.
+All files `depman` uses are in the self-contained `depman/` directory.
 
 ```
 my-project/
@@ -48,14 +48,14 @@ my-project/
 
 - `config.toml` (optional) specifies project configuration. 
 - `dependencies.toml` (optional) specifies your dependencies.
-- `build.nu` is a Nushell script. This is where you define build/test/run/install/whatever commands that will be executed by depman when you run `depman build/test/run/whatever`. These commands are Nushell custom commands.
-- `dependencies.lock` is the lockfile used to pin dependencies with their content hashes. It's not meant to be changed by the user.
-- `cache/` is the directory where dependencies are cached.
-- `build/` is where the artifacts go.
+- `build.nu` is a Nushell script. This is where you define your build, test, run, ... commands.
+- `dependencies.lock` is the lockfile used to pin dependencies with their content hashes.
+- `cache/` is the caching directory.
+- `build/` is where the build artifacts go.
 
-### `dependencies.toml`
+### `dependencies.toml` *(optional)*
 
-Dependencies are specified here. Say you are writing the best text editor in the world:
+Dependencies are specified in this file. Say you are writing the best text editor in the world:
 ```toml
 [builtin-plugins]
 # Repository to `git clone`.
@@ -105,14 +105,14 @@ rsync = 'user@best-text-editor.com:/data/download-stats.csv'
 
 You've just learned the full dependency specification. There's nothing more to it!
 
-### `config.toml`
+### `config.toml` *(optional)*
 
-This file is entirely optional.
+Commands, depsets and depman configuration for the project.
 
 ```toml
 [depman]
 # Output directory for commands. Default: './depman/build/'.
-out-dir = './build/'
+out-dir = '/usr/bin/'
 
 # Caching directory. Default: './depman/cache'
 cache-dir = '~/.cache/'
@@ -126,28 +126,26 @@ default-cmd = 'build'
 release.out-dir = '/usr/bin/editor'
 test.out-dir = '/usr/bin/editor-unstable'
 
-# Whether to clean the out-dir before the execution. Default: true
+# Whether to clean the out-dir before the next execution. Default: true
 test.fresh-start = false
 
 [depsets]
-# Whether to use the lockfile for dependencies in this depset.
+# Whether to use the lockfile for dependencies in this depset. Default: true
 dev-branch.lock = false
 
-# If this depset is not locked by default, make an exception for these dependencies and lock them
+# If this depset is not locked by default, make an exception for these dependencies and lock them. Default: none.
 dev-branch.lock-list = [ 'themes', 'image-helper' ]
 
-# Don't lock the given dependencies. In order to use this key, lock value must be true for the depset.
+# Don't lock the given dependencies. In order to use this key, lock value must be true for the depset. Default: none.
 default.no-lock-list = [ 'community-plugins' ]
 
 # The dependencies to include in the depset. By default a depset includes all 
 # dependencies, even those which don't have a specified source for the depset. 
 # Those dependencies' default source will be used instead.
-helper-dev.deps = [ 'image-helper' ] # We don't need other dependencies when developing image-helper.
+helper-test.deps = [ 'image-helper' ] # We don't need other dependencies when developing image-helper.
 
 # You can specify a dependency blacklist for a depset too.
-windows.no-deps = [ 'themes' ] # Windows users don't like customization.
-# They will feel right at home with the default white on blue theme.
-
+windows.no-deps = [ 'themes' ] # Windows users don't like customization. They will feel right at home with the default white text on blue background theme.
 ```
 
 ### `dependencies.lock`
@@ -158,17 +156,29 @@ Depman itself is also pinned in this file.
 
 ### `build.nu`
 
-This is the file where you define [custom commands](https://www.nushell.sh/book/custom_commands.html) to be executed
+This is the file where you define [custom commands](https://www.nushell.sh/book/custom_commands.html).
 
-All environment variables are cleared before `build.nu` is executed, except `$env.HOME`, `$env.DISPLAY` and `$env.USER`. This is to reduce dependence on the environment and to encourage explicit acquiring of all dependencies.
+An example file defining an `install` command to build and install [Pragtical](https://github.com/pragtical/pragtical?tab=readme-ov-file#quick-build-guide):
 
-The build command is executed with two arguments:
-```depman build <dep_dirs> <source_dir>```
+```nu
+export def install [dep_paths, source_dir, out_dir] {
+	cd $dep_dirs.pragtical
+	meson setup --wrap-mode=forcefallback -Dportable=true build
+	meson compile -C build
+	meson install -C build --destdir $out_dir
+}
+```
 
-- `$dep_dirs`: The table containing dependency name - path pairs.
+All environment variables are cleared before a command from `build.nu` is executed, except `$env.HOME`, `$env.DISPLAY`, `$env.USER` and `$env.PATH`. (You might notice this is the same behavior as `nix-shell`). This is to reduce dependence on the environment and to encourage explicit acquiring of all dependencies.
+
+The build command is executed with three arguments:
+```depman build <dep_dirs> <source_dir> <out_dir>```
+
+- `$dep_paths`: The record containing dependency name - path pairs.
 - `$source_dir`: The source directory (the parent directory of `depman/`)
+- `$out_dir`: The artifact directory for the command.
 
-Working directory is set to the output directory of the command.
+Working directory is set to `$out_dir`.
 
 ## Usage
 
@@ -176,10 +186,11 @@ Working directory is set to the output directory of the command.
 depman {flags} <command> ...(depsets)
 ```
 
+#### Execution:
 1. Find the closest `depman/` directory, searching upwards from the current directory.
 2. Create a rootless container and mount the source directory (parent directory of `depman/`) into the container. The rest of the process from here runs entirely inside the container.
 3. Acquire dependencies specified in `dependencies.toml`. If a dependency set (depset) is given obtain only the dependencies in the specified depset.
-4. Execute the `<command>` you defined in `build.nu`, passing it the acquired dependencies' paths, once for every depset given.
+4. Execute the `<command>` you defined in `build.nu`, passing it the acquired dependencies' paths and the output directory it should create.
 5. That's it!
 
 ### Flags
@@ -203,7 +214,7 @@ depman {flags} <command> ...(depsets)
 ### Subcommands
 -	`depman cache <item> <name>`
 	
-	Cache the given directory or file with the given name. You can use this command to manually cache stuff in your commands.
+	Cache the given directory or file with the given name. You can use this command to manually cache items which are compute heavy to generate in build.nu.
 
 -	`depman retrieve <name> <dir>`
 	
@@ -213,14 +224,25 @@ depman {flags} <command> ...(depsets)
 
 ## FAQ
 
-### Why is using a bash based build.sh not supported?
-Please take a look at your calendar.
 
 ### Why did you create this?
 I was building a complex project for a client which started small but soon required a build system. There were many moving parts, C sources to compile, binaries to bundle, static assets to include. Reliability and reproducibility was a requirement. I evaluated the current mainstream build tools: Bazel, Nix, Make, Dagger, Meson, etc. All of them are either too complex, too inconvenient or too inflexible for the job. So I decided to build a zero learning curve, fully general purpose, zero bloat minimal build tool.
 
+### Why is using a bash based build script not supported?
+Please take a look at your calendar.
+
+### What about Nix?
+
+Nix can indeed do everything Depman can do. Depman can also build upon Nix and benefit from its strengths where it's easier to do something in Nix than in Depman, such as when building OS images. Here are the tradeoffs.
+
+|                                 | Depman                            | Nix                                                           |
+|---------------------------------|-----------------------------------|---------------------------------------------------------------|
+| Dependency declaration language | TOML                              | Nix                                                           |
+| Build language                  | Nu                                | Nix & Bash                                                    |
+| External build programs         | Directly used, e.g `cargo`        | Used by Nix functions calling them, e.g `pkgs.buildRustCrate` |
+| Onboarding/learning time        | 5 minutes                         | 1-2 weeks                                                     |
+| Fully general purpose           | Yes                               | Yes                                                           |
+
 ## Contributing
 
-Please discuss with me before making a PR. I consider this project to be very limited in scope and very minimalistic. Whatever is in the initial release is not intended to change much. 
-
-It's not meant to replace or substitute Nix. It's like the little brother of Nix: far simpler and easier to use, but without all the convenience functions Nix offers to build everything ranging from GUI apps to OS images.
+Please discuss with me before making a PR. I consider this project to be very limited in scope and very minimalistic. Whatever is in the v1 release is not intended to change much. You can see the current roadmap [here](./roadmap.md).
