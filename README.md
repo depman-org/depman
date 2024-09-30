@@ -75,7 +75,7 @@ depman-cmd = 'release'
 [themes]
 # URL to download with HTTP/S GET request
 http.url = 'https://github.com/editor/community-themes/archive/main.tar.gz' 
-# (optional) follow` or `error`. Default: `error`.
+# (optional) 'follow' or 'error'. Default: 'error'.
 http.redirect-mode = 'follow' 
 
 [tutorial-video]

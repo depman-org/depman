@@ -1,4 +1,4 @@
-	#!/usr/bin/env nu
+#!/usr/bin/env nu
 
 const NAME = 'Depman'
 # const VERSION = '0.1.0'
@@ -12,12 +12,8 @@ if $nu_version != $NU_VERSION {
 
 def main [--dir (-d): path, cmd: string, ...depsets: string]: nothing -> nothing {
 
-	[123 232 'sts'] | check-type --structured 'list<int>' --cmd-name 'haha' --err-msg { "sheesh" }
-	#| prt $in
-	exit
 	let depsets: list<string> = $depsets | default ['default']
 	let dir: path = $dir | default './depman'
-
 	if not ($dir | path exists) {
 		print $'There is no "($dir)" directory in the current directory. Do you want to create one? (Y/n)'
 		[Yes No] | input list -f
@@ -30,7 +26,7 @@ def main [--dir (-d): path, cmd: string, ...depsets: string]: nothing -> nothing
 	let config_toml: path = [ $dir 'config.toml'] | path join
 	let config = (
 		if ($config_toml | path exists) {
-			open $config_toml
+			open-toml $config_toml
 		} else { {} }
 	)
 
@@ -41,121 +37,123 @@ def main [--dir (-d): path, cmd: string, ...depsets: string]: nothing -> nothing
 		error $"Can't find a \"($depman_config.build_script | path basename)\" file in "($dir)". Run '($NAME | str downcase) init' to create a starting template."
 	}
 	
-	let commands: table<name: string, fresh-start: bool, out-dir: path> = parse_commands_config $config
-		
 	let dep_locks: any = parse_lockfile
-	
 	let dependencies = parse_dependencies
-	
-	check_dependencies $dependencies
-	# NEXT: WTF IS THIS END OF CODE error?
-	let all_commands = parse_build_script
-	# check_commands $commands $all_commands
-	let config_depsets = parse_depsets $config $dependencies.name
+	let all_commands: table<name: string, fresh-start: bool, out-dir: path> = parse_commands $config
+	let all_depsets = parse_depsets $config $dependencies
+	exit
 
-	# def parse_depsets [config: record, dependencies_list: list<string>]: nothing -> table<name: string, lock: bool, lock-list: list<string>, no-lock-list: list<string>, deps: list<string>> {	
-	# 	let depsets = $config.depsets? | default {} | transpose name config
-
-	# 	for depset in $depsets {
-	# 		$depset.config
-	# 		| columns
-	# 		| all-in  [lock lock-list no-lock-list deps] {|key, valid_keys| $"Unrecognized key \"($key)\" found for depset \"($depset.name)\" in \"($config_toml)\". Valid keys are one of ($valid_keys | recount)." }
-	# 	}
-	# 	$depsets
-	# 	| insert lock {|row|
-	# 		$row.config.lock?
-	# 		| default true
-	# 		| check-type bool -m {|value, value_type| $"Invalid value for key "depsets.($row.name).bool" in \"($config_toml)\". The value must be a boolean. Found value of type \"($value_type)\":\n($value)" }
-	# 	}
-	# 	| insert lock-list {|row|
-	# 		$row.config.lock-list?
-	# 		| default []
-	# 		| if { is-empty }
-
-	# 	| reject config
-
-	# 	$deps_depsets
-	# 	| flatten
-	# 	| get name
-	# 	| uniq
-	# 	| reduce {|it, acc| $acc | merge {$it: {} } } -f {}
-	# 	| merge ($config_depsets | default {})
-	# 	| transpose name config
-	# 	| update config {
-	# 		upsert lock { default true }
-	# 		| upsert pass-default {default true}
-	# 		| upsert lock-list { default [] }
-	# 		| upsert no-lock-list { default [] }
-	# 	}
-	# }
-
-	def check_depsets [depsets: any, deps: any]: nothing -> nothing {
-		$depsets
-		| each {|depset|
-			let config = $depset.config
-			if ($config.lock | describe) != 'bool' {
-				error $'Invalid value for key "depsets.($depset.name).lock". The value must be a boolean.'
+	def parse_depsets [config: record, dependencies: any]: any -> any { # nothing -> table<name: string, lock: bool, lock-list: list<string>, no-lock-list: list<string>, deps: list<string>> {	
+		$config.depsets?
+		| default {}
+		| transpose name value
+		| do {|depsets|
+			$dependencies
+			| get sources
+			| flatten
+			| get depset
+			| uniq
+			| wrap name 
+			| insert value {{}}
+			| transpose -r
+			| merge ($depsets | transpose -r)
+			| transpose name value
+		} $in
+		| each {|it|
+			$it.value
+			| check-type record -m {|value, value_type| $"The value specified for depset \"($it.name)\" in \"($config_toml)\" is invalid: \n($value) \n\nThe value must be a record specifying the configuration for the dependency set."}
+			| run  {
+				columns
+				| all-in  ['lock' 'lock-list' 'no-lock-list' 'deps' 'no-deps'] --error {|key, valid_keys| $"Unrecognized key \"($key)\" found in the configuration of the depset \"($it.name)\" in \"($config_toml)\". Valid keys are one of ($valid_keys | recount)." }
 			}
-			if ($config.pass-default | describe) != 'bool' {
-				error $'Invalid value for key "depsets.($depset.name).pass-default". The value must be a boolean.'
-			}  
-			if not (($config.lock-list | describe) starts-with 'list') {
-				error $'Invalid value for key "depsets.($depset.name).lock-list". The value must be a list of strings.'
+			| err-if ((type-of $in.deps?) == 'list' and ($in.deps? | is-empty)) "The value given to key \"depsets.($it.name).deps\" in \"($config_toml)\" is an empty list. A dependency set must contain at least one dependency."
+			| defaults {
+				lock: true,
+				lock-list: [],
+				no-lock-list: [],
+				deps: [],
+				no-deps: [],
 			}
-			if not (($config.no-lock-list | describe) starts-with 'list') {
-				error $'Invalid value for key "depsets.($depset.name).no-lock-list". The value must be a list of strings.'
+			| run {|value|
+				$value.lock
+				| check-type bool -m {|value, value_type| $"The value given for key "depsets.($it.name).lock" in \"($config_toml)\" has a type of \"($value_type)\": \n($value) \n\nType of the value must be boolean."}
+				[lock-list no-lock-list deps no-deps]
+				| each {|key|
+					$value
+					| get ([$key] | into cell-path)
+					| check-type --structured 'list<string>' -m {|value, value_type, accepted_types| $"The value given for key "depsets.($it.name).($key)" in \"($config_toml)\" has a type of \"($value_type)\": \n($value) \n\nType of the value must be ($accepted_types)."}	
+				}
+				$value 
+				| select lock-list no-lock-list
+				| items {|key, value|
+					$value 
+					| filter {$in not-in $dependencies.name}
+					| err-if ($in | is-not-empty) $'The dependency "($in.0?)" specified in "($config_toml)" for the ($key) for depset "($it.name)" cannot be found in "($depman_config.dependencies_toml)".'
+				}
+				err-if ($value.lock == false and ($value.no-lock-list | is-not-empty)) $'You set both "depsets.($it.name).lock" to false and "depsets.($it.name).no-lock-list" to a non-empty list in "($config_toml)". They are mutually exclusive.'
+				err-if ($value.lock == true and ($value.lock-list | is-not-empty)) $'You set both "depsets.($it.name).lock" to true and "depsets.($it.name).lock-list" to a non-empty list in "($config_toml)". They are mutually exclusive.'
+				err-if (($value.deps | is-not-empty) and ($value.no-deps | is-not-empty)) $'You set both "depsets.($it.name).deps" and "depsets.($it.name).no-deps" in "($config_toml)". They are mutually exclusive.'
 			}
-			if $config.lock == true and ($config.lock-list | is-not-empty) {
-				error $'You set both "depsets.($depset.name).lock" to "true" and "depsets.($depset.name).lock-list" to a non-empty string. They are mutually exclusive.'
-			}
-			if $config.lock == false and ($config.no-lock-list | is-not-empty) {
-				error $'You set both "depsets.($depset.name).lock" to "false" and "depsets.($depset.name).no-lock-list" to a non-empty string. They are mutually exclusive.'
-			}
-			$config | select lock-list no-lock-list
-			| items {|key, value|
-				let nonexistent_deps = ($value | filter {$in not-in $deps.name})
-				if ($nonexistent_deps | is-not-empty) {
-					error $'The value "($value | filter {$in not-in $deps.name} | first)" in key "depsets.($depset.name).($key)" is not among one of the dependencies specified in depman.toml.'
+			| update deps {|value|
+				do-if ($in | is-empty) {
+					$dependencies.name
+					| filter {$in not-in $value.no-deps}
 				}
 			}
+			| reject no-deps
+			| { name: $it.name, ...$in }
 		}
 	}
  
-	def parse_commands_config [config: record]: nothing -> table<name: string, fresh-start: bool, out-dir: path> {
+	def parse_commands [config: record]: nothing -> table<name: string, fresh-start: bool, out-dir: path> {
+		def parse_build_script_commands []: nothing -> list<string> {
+			nu -c $"
+				use ($depman_config.build_script);
+				scope modules
+				| where name == 'build'
+				| get commands.0.name
+				| to nuon
+			"
+			| from nuon
+		}
+		let defined_commands = parse_build_script_commands
+
 		$config.commands?
 		| default {}
 		| transpose name value
+		| run {|commands|
+			$commands.name
+			| all-in $defined_commands --error {|cmd| $"The command \"($cmd)\" found in \"($config_toml)\" has no definition in \"($depman_config.build_script)\"." }
+		}
+		| do {|commands|
+			$defined_commands 
+			| wrap name 
+			| insert value {{}}
+			| transpose -r
+			| merge ($commands | transpose -r)
+			| transpose name value
+		} $in
 		| each {|it|
 			$it.value
-			| check-type record -m {|value, value_type| $"Invalid value for key "commands.($it.name)" in \"($config_toml)\". The value must be a record. Found value of type \"($value_type)\":\n($value)" }
+			| check-type record -m {|value, value_type| $"Invalid value for key "commands.($it.name)" in \"($config_toml)\". Type of the value must be record. Found value of type \"($value_type)\":\n($value)" }
 			| run {
 				columns
-				| all-in  ['fresh-start' 'out-dir' ] --error {|key, valid_keys| $"Unrecognized key \"($key)\" under [depman] in file \"($config_toml).\". Valid keys are one of ($valid_keys | recount)." } # TODO: Test grammatically correct.
+				| all-in  ['fresh-start' 'out-dir' ] --error {|key, valid_keys| $"Unrecognized key \"($key)\" under [depman] in file \"($config_toml).\". Valid keys are one of ($valid_keys | recount)." } # TODO: Grammatically incorrect.
 			}
 			| defaults {
 				fresh-start: true,
 				out-dir: null
 			}
-			| check-type --structured 'record<fresh-start: bool, out-dir: string>' -c parse_commands_config
+			| run {|value|
+				$value.fresh-start
+				| check-type bool -m {|value, value_type| $"The value given for key "commands.($it.name).fresh-start" in \"($config_toml)\" has a type of \"($value_type)\": \n($value) \n\nType of the value must be boolean."}
+				$value.out-dir
+				| do-if ($in != null) {
+					check-type string -m {|value, value_type| $"The value given for key "commands.($it.name).out-dir" in \"($config_toml)\" has a type of \"($value_type)\": \n($value) \n\nType of the value must be string."}
+				}
+			}
 			| {name: $it.name, ...$in}
 		}
-	}
-
-	def check_commands [commands: table<name: string, fresh-start: bool, out-dir: path>, all_commands: list<string>]: nothing -> nothing {
-		$commands.name
-		| all-in $all_commands --error {|cmd| $"The command \"($cmd)\" found in \"($config_toml)\" has no definition in \"($depman_config.build_script)\"." }		
-		| ignore
-	}
-
-	def parse_build_script []: nothing -> list<string> {
-		nu -c $"
-			use ($depman_config.build_script);
-			scope modules
-			| where name == 'build'
-			| get commands.0.name
-			| to nuon
-		"
-		| from nuon
 	}
 	
 	def parse_lockfile []: nothing -> any {
@@ -171,9 +169,9 @@ def main [--dir (-d): path, cmd: string, ...depsets: string]: nothing -> nothing
 	def parse_depman_config [config: record]: nothing -> record {
 		$config.depman?
 		| default {}
-		| check-type 'record' -m {$'Invalid value for key "depman" in "($config_toml)". The value must be a record.'}
+		| check-type 'record' -m {$'Invalid value for key "depman" in "($config_toml)". Type of the value must be record.'}
 		| run {
-			columns 
+			columns
 			| all-in ['out-dir', 'cache-dir', 'default-cmd'] --error {|key, valid_keys| $"Unrecognized key \"($key)\" under [depman] in file \"($config_toml).\". Valid keys are one of ($valid_keys | recount)." }
 		}
 		| defaults { 
@@ -186,87 +184,122 @@ def main [--dir (-d): path, cmd: string, ...depsets: string]: nothing -> nothing
 		}
 	}
 
-	def parse_dependencies []: nothing -> table {
-		open $depman_config.dependencies_toml
-		| default {}
-		| (transpose name sources)
-		| update sources {|dep|
-			let alt_depsets: list<string> = (
-				$dep.sources
-				| columns
-				| filter {|key| $key not-in [http git path rsync cmd depman-cmd]}
-			)
-			let alt_depset_sources = (
-				if ($alt_depsets | is-not-empty) { 
-					$dep.sources | select ...$alt_depsets
-				} else {
-					{}
-				}
-			)
-			let def_source = $dep.sources | reject ...$alt_depsets 
-			{ 
-				...{default: $def_source},
-				...$alt_depset_sources
-			}
-			| transpose depset value
-			| update value {|row|
-				check-type 'record' --err-msg {|value, value_type|
-					$"Invalid value of type \"($value_type)\" for depset \"($row.depset)\" in dependency \"($dep.name)\":\n($value) \n\nThe value must be a record with one the following keys: repo, path, get, rsync, cmd."}
-				| reject -i depman-cmd
-				| transpose type description
-				| insert depman-cmd $row.value.depman-cmd?
-			}
-		}
-	}
-
-	def check_dependencies [dependencies: any] nothing -> nothing {
-		# NEXT 2: Incorporate this code into parsing
-		$dependencies
-		| each {|dep|
-		 	$dep.sources
-			| each {|source|
-				let depset_str = (
-					if $source.depset != default { 
-						$' in depset "($source.depset)"'
-					} else {""}
+	def parse_dependencies []: [nothing ->
+        table<
+            name: string,
+            sources: table<
+                depset: string
+                value: record<
+                    type: string,
+                    description: any, # string | record
+                    depman-cmd: string
+                >
+            >
+        >] {
+		do-if ($depman_config.dependencies_toml | path exists) {
+			open-toml $depman_config.dependencies_toml
+			| default {}
+			| (transpose name sources)
+			| update sources {|dep|
+				let alt_depsets: list<string> = (
+					$dep.sources
+					| columns
+					| filter {|key| $key not-in [http git path rsync cmd depman-cmd]}
 				)
-				# Use filter-one instead of match length.
-				match ($source.value | length) {
-					0 => { error $'No source is specified($depset_str) for dependency "($dep.name)".' },
-					1 => {
-						# NEXT 4: Refactor every type code below to use check-type.
-						let source_value = $source.value.0
+				let alt_depset_sources = (
+					if ($alt_depsets | is-not-empty) { 
+						$dep.sources | select ...$alt_depsets
+					} else {
+						{}
+					}
+				)
+				let def_source = (
+					$dep.sources 
+					| reject ...$alt_depsets
+					| err-if ($in | is-empty) $'You did not specify a default dependency source for dependency "($dep.name)".'
+				)
+				{ 
+					...{default: $def_source},
+					...$alt_depset_sources
+				}
+				| transpose depset value
+				| update value {|source|
+					let key_loc_str: string = (
+						if $source.depset != default { 
+							$' in depset "($source.depset)" for dependency "($dep.name)"'
+						} else {
+							$' for dependency "($dep.name)"'
+						}
+					)
+					
+					$source.value
+					| filter-one $'There are multiple sources($key_loc_str).' $'No source is specified($key_loc_str).'
+					| check-type 'record' --err-msg {|value, value_type|
+						$"The value specified for depset \"($source.depset)\" for dependency \"($dep.name)\" is invalid: \n($value) \n\nA dependency set must be a record with keys specifying a source for the dependency."}
+					| reject -i depman-cmd
+					| transpose type description
+					| insert depman-cmd $source.value.depman-cmd?
+					| run {|source_value|
+						let source_value = $source_value.0
 						match $source_value.type {
 							'git' => { 
 								let repo = $source_value.description
-								if $repo.url? == null {
-									error $'You specified a repo source($depset_str) in dependency "($dep.name)" but did not specify a remote url.'
+								$repo.url?
+								| check-type 'string' --err-msg {|value, value_type|
+									if $value_type == 'nothing' {
+										$'You specified a git repository source($key_loc_str) but did not specify a remote url.'
+									} else {
+										$"The given url value for the git repository source($key_loc_str) has a type of \"($value_type)\": \n($value) \n\nType of the value must be string."
+									}
 								}
-								if $repo.commit? != null and $repo.branch? != null {
-									error $'You specified both commit and branch in the repo source($depset_str) in dependency "($dep.name)". You can only specify one.'
-								}
+								[ $repo.commit? $repo.branch? ]
+								| filter-one --allow-none { error $'You specified both commit and branch in the repo source($key_loc_str) for dependency "($dep.name)". You can only specify one.' }
 							},
 							'http' => {
-								let get = $source_value.description
-								if $get.url? == null {
-									error $'You did not specify the URL to HTTP/S GET($depset_str) in dependency "($dep.name)"'
+								let http = $source_value.description
+								$http.url? 
+								| check-type 'string' --err-msg {|value, value_type|
+									if $value_type == 'nothing' {
+										$'You specified a http source($key_loc_str) but did not specify the url.'
+									} else {
+										$"The given url value for the http source($key_loc_str) has a type of \"($value_type)\": \n($value) \n\nType of the value must be string."
+									}
+								}
+								$http.redirect-mode?
+								do-if ($in != null) {
+									check-type 'string' --err-msg {|value, value_type| $"The given redirect-mode value for the http source($key_loc_str) has a type of \"($value_type)\": \n($value) \n\nType of the value must be string."}
+									| err-if ($in not-in ['follow' 'error']) $"The given redirect-mode value for the http source($key_loc_str) is invalid: \n($http.redirect-mode) \n\nThe value must be either \"follow\" or \"error\"."
 								}
 							},
-							'path'|'rsync'|'cmd'|'depman-cmd' => {},
-							_ => { error $'Unrecognized source type "($source_value.type)"($depset_str) for dependency "($dep.name)".' }
+							'path'|'rsync'|'cmd'|'depman-cmd' => {
+								$source_value.description
+								| check-type 'string' --err-msg {|value, value_type|
+									$"The given value for the ($source_value.type) source($key_loc_str) has a type of \"($value_type)\": \n($value) \n\nType of the value must be string."
+								}
+							},
+							_ => { error $'Unrecognized source type "($source_value.type)"($key_loc_str) for dependency "($dep.name)".' }
 						}
-					},
-					_ => { error $'There are multiple sources($depset_str) for dependency "($dep.name)".' }
-				} 
+					}
+				}
 			}
 		}
 	}
-
 }
 
+def open-toml [path: path]: nothing -> record {
+	try {
+		open $path
+	} catch {|err| 
+		$err.debug 
+		| parse --regex '"(?<help>TOML parse error.+)"' 
+		| get help.0
+		| str replace --all '\n' "\n"
+		| str replace --regex '(at line \d+, column \d+)' $'$1 in file (ansi teal)($path)(ansi reset):'
+		| error $in
+	} 
+}
 
 # Execute a closure without disrupting the pipeline.
-# The difference between this and 'tee' is this doesn't modify the input under no circumstances and is synchronous.
 def run [
 	closure: closure   # A closure to run. Input: the input (any). Parameters: the input (any).
 ]: any -> any {
@@ -275,7 +308,7 @@ def run [
 	$input
 }
 
-# Converts the list into an English recounting.
+# Convert the list into an English recounting.
 def recount [
 	--and (-a)   # Delimit the last item with 'and' instead of 'or'.
 ]: list<string> -> string {
@@ -293,47 +326,100 @@ def defaults [defaults: record]: [list<record> -> list<record>, record -> record
         $defaults
         | merge $it
     }
-}
+}	
 
-def error [message: string] nothing -> nothing {
+# Raise an error with the given message.
+def error [message: string]: nothing -> error {
 	error make --unspanned {msg: $message}
-}
+}				
 
 def prt [value?: any, --json (-j)]: any -> any {
-	let input = $in
-	def convert []: any -> string {
-		if $json {
+	run {
+		[$value, $in]
+		| filter-one { first } 'prt: No value argument or input is provided.'
+		| traverse {
+			do-if (($in | describe) == closure) {'Closure'} 
+		}
+		| if $json {
 			to json
 		} else {
-			to nuon
+			to nuon	
+		}
+		| print $in
+	}
+}
+
+# Get the base type of a value provided either as an argument or from the input. 
+# Base types comprise 'list', 'record', and all basic types. Tables are recognized as lists.
+def type-of [value: any]: nothing -> string {
+	$value 
+	| describe --detailed 
+	| get type
+}
+
+# Run a closure on every basic value contained in structured values.
+def traverse [
+	closure?: closure            # If given, run this closure on every basic value. Parameters: the input value (any). Input: the basic value (any).
+	--structured (-s): closure   # If given, run this closure on structured values themselves and use the output for further traversal. Parameters: the input value (any). Input: the structured value (any). 
+	--keep-input (-k)            # Output the input unchanged.
+]: any -> any {
+	let input = $in | collect
+	def _traverse [closure: closure, structured: closure]: any -> any {
+		match (type-of $in) {
+			'list' => {
+				do $structured $input
+				| each {|it|
+					$it | _traverse $closure $structured
+				}
+			}
+			'record' => {
+				do $structured $input
+				| items {|key, value|
+					$value
+					| _traverse $closure $structured
+					| {$key: $in}
+				}
+				| reduce -f {} {|it, acc| $acc | merge $it}
+			}
+			_ => {
+				do-if ($closure != null) {
+					do $closure $input
+				}
+			}
 		}
 	}
-	if $input == null and $value == null {
-		error "There is neither stdin nor value provided to prt."
-	}
-	if $value != null {
-		$value | convert | print $in
-	} else if $input != null {
-		$input | convert | print $in
-	}
 	$input
+	| _traverse ($closure | default {||}) ($structured | default {||})	
+	| do-if $keep_input { $input }
 }
+
 
 # Check that the input list has only one non-nothing item. If so, return it. Otherwise error with given message.
 def filter-one [
-	none_err: string        # The error message to use if no items match.
-	multiple_err: closure   # A closure to construct an error message with, to use when more than one item matches. Input: input list (list<any>). Parameters: matching items (list<any>). Output: string.
-	predicate?: closure     # If given, test whether elements in the input list fullfill this predicate instead. Input: input list (list<any>). Parameters: repeat item (any). Output: bool.
+	multiple: any               # (string | closure) If multiple items match, error with the given message string or execute the given closure on matching items and return the result. Input: matching items (list<any>). Parameters: input list (list<any>). Output: string.
+	none_err?: string           # If given, error with the given message if no items match.
+	--allow-none (-n)           # If given, don't error if no items match.
+	--predicate (-p): closure   # If given, test whether elements in the input list fullfill this predicate instead. Input: input list (list<any>). Parameters: repeat item (any). Output: bool.
 ]: list<any> -> any {
-	let input = $in
+	let input = $in | collect # TODO: When is collect necessary?
+	if $none_err == null and $allow_none != true {
+		error "filter-one: You left the second argument \"none_err\" empty but you didn't specify the \"--allow-none (-n)\" flag."
+	}
+	let multiple_type = $multiple | describe
+	if not ($multiple | is-type 'string' 'closure') {
+		error $'filter-one: Received a value with a type of "($multiple_type)" for "multiple" argument. The value must have a type of either string or closure.'
+	}	
 	$input
 	| filter ($predicate | default {|it| $it != null})
 	| match ($in | length) {
 		0 => { error $none_err },
 		1 => { $in | first },
-		_ => { 
-			let matches: list<any> = $in
-			error ($input | do $multiple_err $matches) 
+		_ => {
+			if $multiple_type == closure {
+				do $multiple $input
+			} else if $multiple_type == string {
+				error $multiple
+			}
 		}
 	}
 }
@@ -343,81 +429,83 @@ def check-type [
 	...types: string          # Type descriptions to check for. Syntax is the same as 'describe' command output.
 	--cmd-name (-c): string   # Name of the command to auto-generate an error message from.
 	--err-msg (-m): closure   # A closure to generate a customized error message with. Parameters: input value (any), input value type (string), an English recounting of accepted types (string).
-	--structured (-e)         # Match a nested structured data types, instead of just the general type.
-	--no-error (-n)           # Don't throw an error and return the check result (bool) instead.
+	--structured (-e)         # Match nested/structured data types, instead of just the base type.
 	]: any -> any {
 	let input = $in
-
-	def _check-type [args: record<types: list<string>, cmd_name: any, structured: bool, no_error: bool>]: any -> nothing {
-		let value = $in
-		let types = $args.types
-		let cmd_name = $args.cmd_name
-		let structured = $args.structured
-		let no_error = $args.no_error
-		let value_type: string = do {
-			$value | describe
-			| do-if (not $structured) { get_basic_type }
-		}
-
-		$types
-		| err-if-any {|type|
-			let is_structured_type = ($type | get_basic_type) != $type
-			$structured != $is_structured_type
-		} {|type|
-			if $structured {
-				$"check-type: You specified the --structured \(-s\) flag but provided a basic data type to check against: \"($type)\". \nPlease provide a structured type instead, like \"list<($type)>\"."
-			} else {
-				let simple_type: string = $type | get_basic_type
-				$"check-type: You didn't specify the --structured \(-s\) flag but provided a structured data type to check against: \"($type)\". \nPlease provide a simple type instead, like \"($simple_type)\"."
-			}
-		}
-
-		if (($value_type in $types) or
-			(	# An empty list should match a list containing any type.
-				$value_type == 'list<any>' and
-				($value | is-empty ) and
-				($types | any {($in | get_basic_type) == 'list'})
-			)
-		) {
-			if $no_error { true }
-		} else {
-			let types_str: string = $types	| recount
-			let err_msg: string = (
-				$err_msg
-				| default { $"Invalid value given to command \"($cmd_name)\". Expected a value with a type of ($types_str). Found value of type \"($value_type)\":\n($value)" }
-				| do $in $value $value_type $types_str
-			)
-			if $no_error { false } else {
-				error $err_msg
-			}
-		}
-	}
 
 	[
 		{'--cmd-name (-c)': $cmd_name}
 		{'--err-msg (-m)': $err_msg}
-		{'--no-error (-n)': $no_error}
 	]
-	| run {
-		each { 
-			do-if ($in | get_simple_type | $in == closure) {'closure'}
-			| prt $in
-	}
-	| filter-one $'check-type: You must provide at least one of the flags ($in | columns | recount).' {|matches| $"check-type: You provided ($matches | columns | recount --and) flags. Please provide only one." } {|it| ($it | values).0 | != null}
+	| (filter-one
+		{|matches| error $"check-type: You provided ($matches | columns | recount --and) flags. Please provide only one." } 
+		$'check-type: You must provide at least one of the flags ($in | columns | recount).' 
+		--predicate {|it| ($it | values).0 != null})
+
+	$types | _check-type {types: ['list<string>'], cmd_name: 'check-types', structured: true}
+	$input | _check-type {types: $types, cmd_name: $cmd_name, structured: $structured}
 	
-	
-	$types | _check-type {types: ['list<string>'], cmd_name: 'check-types', structured: true, no_error: false}
-	
-	$input 
-	| _check-type {types: $types, cmd_name: $cmd_name, structured: $structured, no_error: $no_error}
-	| do-if (not $no_error) {
-		$input
+	def _check-type [args: record<types: list<string>, cmd_name: any, structured: bool>]: any -> nothing {
+		let value = $in
+		let types = $args.types
+		let cmd_name = $args.cmd_name
+		let structured = $args.structured
+
+		if $structured {
+			$value | is-type --structured ...$types
+		} else {
+			$value | is-type ...$types
+		}
+		| if not $in {
+			let types_str: string = $types	| recount
+			let value_type: string = $value | describe
+			let err_msg: string = (
+				$err_msg
+				| default { $"($cmd_name): Expected a value with a type of ($types_str). Found value of type \"($value_type)\":\n($value)"}
+				| do $in $value $value_type $types_str
+			)
+			error $err_msg
+		}
 	}
 
+	$input
+}
+
+# Check whether the input matches a given list of types.
+def is-type [
+	...types: string          # Type descriptions to check for. Syntax is the same as 'describe' command output.
+	--structured (-e)         # Match nested/structured data types, instead of just the base type.
+	]: any -> any {
+	let value = $in
+	let value_type: string = do {
+		$value 
+		| describe
+		| do-if (not $structured) { get-basic-type }
+	}
+	$types
+	| err-if-any {|type|
+		let is_structured_type = ($type | get-basic-type) != $type
+		$structured != $is_structured_type
+	} {|type|
+		if $structured {
+			$"is-type: You specified the --structured \(-s\) flag but provided a basic data type to check against: \"($type)\". \nPlease provide a structured type instead, like \"list<string>\"."
+		} else {
+			let simple_type: string = $type | get-basic-type
+			$"is-type: You didn't specify the --structured \(-s\) flag but provided a structured data type to check against: \"($type)\". \nPlease provide a simple type instead, like \"($simple_type)\"."
+		}
+	}
+
+	($value_type in $types) or (	
+		# An empty list should match a list containing any type.
+		# TODO: The current method can't work on lists nested inside other data types. For this to work, we need to match the output of describe --detailed. It contains information about whether the list is empty too.
+		$value_type == 'list<any>' and
+		($value | is-empty ) and
+		($types | any {($in | get-basic-type) == 'list'})
+	)
 }
 
 # Get the basic type from a type description.
-def get_basic_type []: string -> string {
+def get-basic-type []: string -> string {
 	str replace --regex '<.*' ''
 }
 
@@ -449,9 +537,10 @@ def err-if [
 # Conditionally run a closure on the input.
 def do-if [
 	condition: bool   # A condition to check for.
+	--not             # Negate the condition.
 	then: closure     # A closure to run on input if the condition is true. Input: input (any). Parameters: input (any).
 ]: any -> any {
-	if $condition {
+	if $condition xor $not {
 		$in | do $then $in
 	} else { $in }
 }
@@ -459,7 +548,7 @@ def do-if [
 # Test if every element in the input is an item in a list, is part of a string, or is a key in a record.
 def all-in [
 	operand: any            # A string, list, or record to check inclusion in.
-	--error (-e): closure   # If given, create an error if any given item is not in the input, with an error message determined by the given closure. Input: nonexistent item (any). Parameters: nonexistent item (any), the operand (any).
+	--error (-e): closure   # If given, create an error if any given item is not in the input, with an error message created with the given closure. Input: nonexistent item (any). Parameters: nonexistent item (any), the operand (any). Output: string.
 ]: list<any> -> bool {
 	if $error != null {
 		err-if-any {|it| $it not-in $operand} {|it| $it | do $error $it $operand}
