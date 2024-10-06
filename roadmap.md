@@ -24,14 +24,12 @@ The following is a list of items to be completed before the v1 release. Items ar
 	- --help
 	- --watch
 -  Signing support for dependencies to be able to confirm authenticity when updating them..
--  Save http downloads with an inferred name.
-	- Extract a reasonable name from the url, sanitize it and use this as filename. See for an example https://www.npmjs.com/package/sanitize-filename.
--  Check whether we are using unsanitized user input as filename anywhere.
+-  Check whether we are using unsanitized user input as filename anywhere (this should be built into nu_livr).
 -  If hash collision attack in the lockfile and elsewhere is possible, use a perfect hashing function.
 -  Nearest `depman/` folder search in parent directories à la `git`.
 -  Implement `nu_livr` and move input validation to it as possible.
 -  Create and use an errors-as-values based error handling module.
--  Implement a proper formatting standard for errors, warnings, infos, logs and in other user communication. 
+-  Implement a proper formatting standard for errors, warnings, infos, logs and other user communication. 
 	- JJ has a very good UI as an example. For starters, use colors and pagers and customize nushell errors to not add a vertical line.
 -  Don't parse all the files every run, cache the parsing results.
 -  Nixpkgs packages and flakes accepted as a dependency type.

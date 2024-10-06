@@ -1,5 +1,5 @@
-#### Caution!
-This project is currently in alpha stage and **most** of the features described here are not implemented yet.
+### Caution!
+This project is in alpha stage. This means many of the features below are not implemented yet.
 
 ## What is Depman?
 
@@ -15,21 +15,21 @@ It can replace (or build upon) tools as diverse as Make, Meson, Nix, Travis, GH 
 - **General purpose**: No assumptions about language, project type, ecosystem, or tooling.
 - **Flexible**: You 'just write a shell script'. There is no DSL or programming language (besides Nushell).
 - **Interoperable**: Everything Depman does happens in a single self contained 'depman/' directory anywhere in your project.
-- **Secure**: Everything is fully isolated from your system with rootless containers.
-- **Reproducible (Repeatable)**: Every input/dependency is pinned with its content hash.
+- **Isolated**: Everything is fully isolated from your system with rootless containers.
+- **Reproducible (Repeatable)**: Inputs *and* outputs are pinned with their content hashes.
 - **Fast**: Caches as much as possible.
 - **Cross-platform**: Works on Linux, MacOS and Windows.
 - **Backwards & forwards compatible**: Any version of Depman can build a project using any version of Depman.
 - **Modern**: Written in Nushell, a statically typed, functionally oriented cross-platform shell and programming language written in Rust.
 
-### Values
+### Values 
 Ordered by priority:
 
-1. Reliability & Security: Depman will warn you and not proceed if any your dependencies have changed a single bit. It will never auto-update dependencies.
-2. Minimalism:
-    - In behavior: The usage manual (following two sections of this file) should never exceed 5 minutes in reading time.
-    - In implementation: The total LoC should always remain below 1000.
-3. Convenience: Wherever isn’t incompatible with the above values, we pursue the most convenient UX.
+1. **Security**: Depman will warn you and not proceed if any your dependencies have changed a literal bit. It will never auto-update dependencies.
+2. **Minimalism**:
+    - In behavior: The usage manual (following two sections of this file) shouldn't exceed 5 minutes in reading time.
+    - In implementation: The total LoC should remain below 1000.
+3. **Convenience**: The most convenient UX possible that gets out of your way and lets you do your job with the least amount of friction.
 
 ## The files
 
@@ -41,17 +41,17 @@ my-project/
     config.toml
     dependencies.toml
 	dependencies.lock
-    build.nu
-	build/
+    commands.nu
+	artifacts/
     cache/
 ```
 
 - `config.toml` (optional) specifies project configuration. 
 - `dependencies.toml` (optional) specifies your dependencies.
-- `build.nu` is a Nushell script. This is where you define your build, test, run, ... commands.
+- `commands.nu` is a Nushell script. This is where you define your build, test, run, ... commands.
 - `dependencies.lock` is the lockfile used to pin dependencies with their content hashes.
 - `cache/` is the caching directory.
-- `build/` is where the build artifacts go.
+- `artifacts/` is where the build artifacts go.
 
 ### `dependencies.toml` *(optional)*
 
@@ -73,7 +73,7 @@ depman-cmd = 'release'
 # This will execute `depman release` in the dependency directory after it's obtained.
 
 [themes]
-# URL to download with HTTP/S GET request
+# URL to download with HTTP/S GET request.
 http.url = 'https://github.com/editor/community-themes/archive/main.tar.gz' 
 # (optional) 'follow' or 'error'. Default: 'error'.
 http.redirect-mode = 'follow' 
@@ -90,7 +90,7 @@ windows.path = '~/editor-assets/tutorial-windows.mp4'
 # For every dependency, the source specified without a depset prefix is in the depset named 'default'.
 
 [image-helper]
-# Command to execute in nushell, with output directory given in the $out_dir environment variable.
+# Command to execute in nushell, with the output directory given in the $out_dir environment variable.
 cmd = 'cd ./image-helper; cargo build --release --root $env.out_dir'
 windows.cmd = 'cd ./image-helper; cargo build --release --root $env.out_dir --target x86_64-pc-windows-gnu'
 macos.cmd = 'cd ./image-helper; cargo build --release --root $env.out_dir --target x86_64-apple-darwin'
@@ -118,15 +118,15 @@ out-dir = '/usr/bin/'
 cache-dir = '~/.cache/'
 
 # The default user-defined command to execute, when no command name is given as argument. Default: none.
-default-cmd = 'build'
+default-command = 'build'
 
 [commands]
-# The output directory for the command to use. Default: './depman/build/<command_name>'
-# If a depset is used, default is: './depman/build/<command_name>_<depset_name>'
+# The output directory for the command to use. Default: './depman/artifacts/<command_name>'
+# If a depset is used, default is: './depman/artifacts/<command_name>_<depset_name>'
 release.out-dir = '/usr/bin/editor'
 test.out-dir = '/usr/bin/editor-unstable'
 
-# Whether to clean the out-dir before the next execution. Default: true
+# Whether to clean the command output directory before the next execution. Default: true
 test.fresh-start = false
 
 [depsets]
@@ -154,33 +154,33 @@ The file containing source hashes to directory contents hashes.
 If there's a single bit of change in the dependencies, Depman refuses to proceed and warns the user, showing the changes between in the different versions.
 Depman itself is also pinned in this file.
 
-### `build.nu`
+### `commands.nu`
 
-This is the file where you define [custom commands](https://www.nushell.sh/book/custom_commands.html).
+This is the file where you define [commands](https://www.nushell.sh/book/custom_commands.html) to execute.
 
-An example file defining an `install` command to build and install [Pragtical](https://github.com/pragtical/pragtical?tab=readme-ov-file#quick-build-guide):
+Here's an example file defining an `install` command to build and install [Pragtical](https://github.com/pragtical/pragtical?tab=readme-ov-file#quick-build-guide):
 
 ```nu
-export def install [dep_paths, source_dir, out_dir] {
-	cd $dep_dirs.pragtical
+export def install [dependency_dirs, source_dir, out_dir] {
+	cd $dependency_dirs.pragtical
 	meson setup --wrap-mode=forcefallback -Dportable=true build
 	meson compile -C build
 	meson install -C build --destdir $out_dir
 }
 ```
 
-All environment variables are cleared before a command from `build.nu` is executed, except `$env.HOME`, `$env.DISPLAY`, `$env.USER` and `$env.PATH`. (You might notice this is the same behavior as `nix-shell`). This is to reduce dependence on the environment and to encourage explicit acquiring of all dependencies.
+All environment variables are cleared before a command from `commands.nu` is executed, except `$env.HOME`, `$env.DISPLAY`, `$env.USER` and `$env.PATH`. (You might notice this is the same behavior as `nix-shell`). This is to reduce dependence on the environment and to encourage explicit acquiring of all dependencies.
 
-The build command is executed with three arguments:
-```depman build <dep_dirs> <source_dir> <out_dir>```
+Your command is executed with three arguments:
+```depman install <dependency_dirs_dirs> <source_dir> <out_dir>```
 
-- `$dep_paths`: The record containing dependency name - path pairs.
+- `$dependency_dirs`: The record containing dependency name - directory pairs.
 - `$source_dir`: The source directory (the parent directory of `depman/`)
-- `$out_dir`: The artifact directory for the command.
+- `$out_dir`: The directory for the command to put artifacts in.
 
 Working directory is set to `$out_dir`.
 
-## Usage
+## Usage									
 
 ```
 depman {flags} <command> ...(depsets)
@@ -190,7 +190,7 @@ depman {flags} <command> ...(depsets)
 1. Find the closest `depman/` directory, searching upwards from the current directory.
 2. Create a rootless container and mount the source directory (parent directory of `depman/`) into the container. The rest of the process from here runs entirely inside the container.
 3. Acquire dependencies specified in `dependencies.toml`. If a dependency set (depset) is given obtain only the dependencies in the specified depset.
-4. Execute the `<command>` you defined in `build.nu`, passing it the acquired dependencies' paths and the output directory it should create.
+4. Execute the `<command>` you defined in `commands.nu` with the obtained dependencies' locations given as argument.
 5. That's it!
 
 ### Flags
@@ -214,7 +214,7 @@ depman {flags} <command> ...(depsets)
 ### Subcommands
 -	`depman cache <item> <name>`
 	
-	Cache the given directory or file with the given name. You can use this command to manually cache items which are compute heavy to generate in build.nu.
+	Cache the given directory or file with the given name. You can use this command to manually cache items which are compute heavy to generate in commands.nu.
 
 -	`depman retrieve <name> <dir>`
 	
