@@ -14,9 +14,16 @@ const default_paths = {
 	commands_script: 'commands.nu'
 }
 
+const path_separator = if $nu.os-info.family == unix {'/'} else {'\'}
 let nu_version: string = try { (version).version } catch { 'unknown' }
 if $nu_version != $NU_VERSION {
-	error $"Your Nushell version is not compatible with ($NAME). Required Nushell version is ($NU_VERSION).\nYou can download different versions of Nushell here: https://github.com/nushell/nushell/releases"
+	error $"Your Nushell version is not compatible with ($NAME). Required Nushell version is ($NU_VERSION | ans green).\nYou can download different versions of Nushell here: https://github.com/nushell/nushell/releases"
+}
+
+def 'main test' [] {
+	$env.prt_json = false
+	
+	'htht' | check-type int datetime --err-msg {|value, value_type, accepted_types| {messasge: $"value: ($value)\n sitnri \nninist", hint: $"Please don't do shit like this ok ($accepted_types)"}} 
 }
 
 # Depman is the simplest possible project dependency manager, build system and command runner all in one.
@@ -40,7 +47,7 @@ def main [
 		| default ([. $DEPMAN_DIR] | path join)
 	)
 	if not ($dir | path exists) {
-		print $"No ($dir | path basename) directory found. Do you want to create one at path \"($dir)\"? \(Y/n\)"
+		print $"No ($dir | path basename | fmt dir) directory found. Do you want to create one at path ($dir | fmt dir)? \(Y/n\)"
 		[Yes No] | input list -f
 		| if $in == 'Yes' {
 			main init
@@ -62,33 +69,26 @@ def main [
 			open-toml $config_toml
 		} else { {} }
 	)
-
+	
 	let depman_config = parse_depman_config $config $config_defaults
 	$depman_config
 	| select out-dir cache-dir
-	| items {|_, path|
-		let path: path = $path | path split | path join
-		if not ($path | path exists) {
-			mkdir $path
-		} else if (ls -D $path).type.0 != dir {
-			error $"Can't create the directory ($path). There is already an item named \"($path | path basename)\" in \"($path | path dirname)\"."
-		}
-	}
-	if not ($depman_config.commands_script | path exists) {
-		error $"Can't find a \"($depman_config.commands_script | path basename)\" file in "($dir)". Run '($CLI_NAME) init' to create a starting template."
-	}
+	| items {|_, path| ensure-dir $path}
 
+	if not ($depman_config.commands_script | path exists) {
+		error -t 'No commands file' $"Can't find a ($depman_config.commands_script | path basename | fmt file) file in ($dir | fmt dir)." --hint $"Run ($'($CLI_NAME) init' | fmt cmd) to create a starting template."
+	}
 	let dep_locks: any = parse_lockfile
 	let all_commands: table<name: string, fresh-start: bool, out-dir: path> = parse_commands $config
 	# $all_commands | each {} # This pattern is used to raise the errors contained within the value.
 	let command: string = $command | default $depman_config.default-command
-	err-if ($command not-in $all_commands.name) $"The given command \"($command)\" cannot be found in \"($depman_config.commands_script)\"."
+	err-if ($command not-in $all_commands.name) $"The given command ($command | fmt cmd) cannot be found in ($depman_config.commands_script | fmt)."
 	let dependencies = parse_dependencies
 	$dependencies | each { get sources | each {} }
 	let all_depsets = parse_depsets $config $dependencies
 	$all_depsets | each {}
 	$depsets
-	| all-in $all_depsets.name --error {|depset| $"The specified depset \"($depset)\" cannot be found in \"($config_toml)\" or \"($depman_config.dependencies_file)\"."}
+	| all-in $all_depsets.name --error {|depset| $"The specified depset ($depset | fmt depset) cannot be found in ($config_toml | fmt) or ($depman_config.dependencies_file | fmt)."}
 	$depsets
 	| each {|depset|
 		let depset_config = (
@@ -118,15 +118,15 @@ def main [
 		| run-each {|dep|
 			if not ($dep.dir | path exists) { mkdir $dep.dir }
 		}
-		| run-if ($in | all {ls -a $in.dir | is-not-empty}) { say -i 1 $'All dependencies for depset ($depset | ans light_blue | ans attr_bold) are already obtained.' }
+		| run-if ($in | all {ls -a $in.dir | is-not-empty}) { say -i 1 $'All dependencies for depset ($depset | fmt depset) are already obtained.' }
 		| run-if ($in | any {ls -a $in.dir | is-empty}) {
-			say -i 1 'Obtaining dependencies for depset ' (say -o -a [light_blue attr_bold] $depset)
+			say -i 1 'Obtaining dependencies for depset ' ($depset | fmt depset)
 		}
 		| run-par-each {|dep|
 			mkdir $dep.dir
 			if (ls -a $dep.dir | is-empty) {
 				[
-					(say -o -i 2 "Obtaining dependency " ($dep.name | ans darkorange3b | ans attr_bold) '...')
+					(say -o -i 2 "Obtaining dependency " ($dep.name | fmt dep) '...')
 					...($dep.cmd-str | lines | each {|line| say -o -i 3 $line })
 				]
 				| str join "\n"
@@ -134,16 +134,16 @@ def main [
 				do $dep.cmd
 				| complete 
 				| if $in.exit_code != 0 {
-					error $"Can't obtain the dependency ($dep.name | ans darkorange3b | ans attr_bold)."
+					error $"Can't obtain the dependency ($dep.name | fmt dep)."
 				}
 			}
 		}
 		| run {|deps|
 			say ""
-			say -i 1 $"Running the command ($command | ans lg | ans attr_bold)..."
+			say -i 1 $"Running the command ($command | fmt cmd)..."
 			let dependency_dirs = $deps | select name dir | transpose -rd
-			let source_dir = $dir | path parse | get parent | err-if ($in == null) "You can't use a system root directory as the depman directory."
-			let out_dir = (
+			let source_dir: path = $dir | path parse | get parent | err-if ($in == null) "You can't use the system root directory as the depman directory."
+			let out_dir: path = (
 				$all_commands
 				| where name == $command
 				| get 0.out-dir
@@ -154,6 +154,7 @@ def main [
 					)
 				)
 			)
+			
 			if ($all_commands | where name == $command).0.fresh-start {
 				rm -rf $out_dir
 				mkdir $out_dir
@@ -167,7 +168,7 @@ def main [
 				commands ($command) $args.dependency-dirs $args.source-dir $args.out-dir
 				ignore
 			"
-			say -i 1 $"Successfully ran ($command | ans lg | ans attr_bold)."
+			say -i 1 $"Successfully ran ($command | fmt cmd)."
 		}
 	}
 
@@ -245,12 +246,12 @@ def main [
 		}
 		| each {|it|
 			$it.value
-			| check-type record -m {|value, value_type| $"The value specified for depset \"($it.name)\" in \"($config_toml)\" is invalid: \n($value) \n\nThe value must be a record specifying the configuration for the dependency set."}
+			| check-type record -m {|value, value_type| $"The value specified for depset ($it.name | fmt depset) in ($config_toml | fmt) is invalid: \n($value) \n\nThe value must be a record specifying the configuration for the dependency set."}
 			| run  {
 				columns
-				| all-in  ['lock' 'lock-list' 'no-lock-list' 'deps' 'no-deps'] --error {|key, valid_keys| $"Unrecognized key \"($key)\" found in the configuration of the depset \"($it.name)\" in \"($config_toml)\". Valid keys are one of ($valid_keys | recount)." }
+				| all-in  ['lock' 'lock-list' 'no-lock-list' 'deps' 'no-deps'] --error {|key, valid_keys| $"Unrecognized key ($key | fmt input) found in the configuration of the depset ($it.name | fmt depset) in ($config_toml | fmt). Valid keys are one of ($valid_keys | recount)." }
 			}
-			| err-if ((type-of $in.deps?) == 'list' and ($in.deps? | is-empty)) "The value given for key \"depsets.($it.name).deps\" in \"($config_toml)\" is an empty list. A dependency set must contain at least one dependency."
+			| err-if ((type-of $in.deps?) == 'list' and ($in.deps? | is-empty)) "The value given for key ($"depsets.($it.name).deps" | fmt key) in ($config_toml | fmt) is an empty list. A dependency set must contain at least one dependency."
 			| defaults {
 				lock: true,
 				lock-list: [],
@@ -260,7 +261,7 @@ def main [
 			}
 			| run {|value|
 				$value.lock
-				| check-type bool -m {|value, value_type| $"The value given for key "depsets.($it.name).lock" in \"($config_toml)\" has a type of \"($value_type)\": \n($value) \n\nType of the value must be boolean."}
+				| check-type bool -m {|value, value_type| $"The value given for key ($"depsets.($it.name).lock" | fmt key) in ($config_toml | fmt) has a type of ($value_type | fmt type): \n($value) \n\nType of the value must be ('boolean' | fmt type)."}
 				[lock-list no-lock-list deps no-deps]
 				| each {|key|
 					$value
@@ -469,13 +470,17 @@ def main [
 			}
 		}
 	}
+
+	def unexpected-error [situation: string] {
+		$"An unexpected error occurred. We're sorry about this. In order for this issue to be fixed as soon as possible, please report it at ($"($GITHUB_URL)/issues" | ansi link | ans blue) with the following information: \nCause of error: ($situation) \n($NAME) version: ($VERSION)".
+	}
 }
 
 # Initiate Depman in your project.
 def 'main init' [
 	project_dir?: path   # Path to the project directory. (default: current directory)
 ]: nothing -> nothing {
-	let project_dir: path = $project_dir | default './'
+	let project_dir: path = $project_dir | default '.'
 	let depman_dir = [$project_dir $DEPMAN_DIR] | path join
 	err-if ($depman_dir | path exists) $"The directory \"($depman_dir)\" already exists. If you want to re-initialize ($NAME), remove it before running \"($CLI_NAME) init\"."
 	mkdir $depman_dir
@@ -547,9 +552,10 @@ def run-if [
 
 # Convert the list into an English recounting.
 def recount [
-	--and (-a)   # Delimit the last item with 'and' instead of 'or'.
+	--and (-a)         # Delimit the last item with 'and' instead of 'or'.
+	--no-quotes (-n)   # Don't put quotes around items.
 ]: list<string> -> string {
-	each { $'"($in)"'}
+	do-if --not $no_quotes { each { $'"($in)"'} }
 	| chunks ($in | length | [($in - 1), 1] | math max)
 	| each { str join ', ' }
 	| str join (
@@ -607,21 +613,63 @@ def say [
 	}
 }
 
-# Print an error with the given message and exit.
+# Print an error with the given message and exit the program.
 def error [
-	message: string        # The error message to display.
-	--title (-t): string   # (optional) Display a title
-	--hint (-h): string    # (optional) Display a hint
-]: any -> nothing {
-	print $"(('Error' | ans red) + ':' | ans attr_bold)   ('×' | ans red) ($message)"
-	exit
+	message: any            # (string | record) An error message string or a record with fields <message: string, title?: string, hint?: string, source?: string> to display.
+	--hint (-h): string     # (optional) Display a hint
+	--title (-t): string    # (optional) Display a title
+	--source (-s): string   # (optional) Display a source for the error
+]: nothing -> nothing {
+	let record = do-if ($message | is-type record) {$message}
+	if $record != null and (
+		($record.message? | is-type --not string) or
+		($record.hint? | is-type --not string nothing) or
+		($record.title? | is-type --not string nothing) or
+		($record.source? | is-type --not string nothing) or
+		not ($record | columns | all-in [message hint title source])
+	) { 
+		(_error $"The given error message doesn't match type ('record<message: string, hint?: string, title?: string, source?: string>' | fmt type): \n\n($record)" 
+			$"Run ('error --help' | fmt cmd) for more information."
+			$"Type mismatch" 
+			'error')
+	}
+	
+	let message = if $record != null { $record.message } else { $message }
+	let hint = if $record != null { $record.hint? } else { $hint }
+	let title = if $record != null { $record.title? } else { $title }
+	let source = if $record != null { $record.source? } else { $source }
+
+	def _error [message, hint?, title?, source?] {
+		let no_title = $title == null
+		let title = if $no_title { $message } else { $title }
+		let message = if $no_title {} else { $message }
+		if ($title | str contains "\n") {
+			(_error $"The text of the provided error contains newlines: \n($title | to nuon)" 
+				$"Remove newlines from the (if $no_title {"message"} else {"title"})." 
+				$"Newlines in provided error text" 
+				'error')
+		}
+		if $source != null and ($source | rgx-contains '\s') {
+			(_error $"The source of the provided error contains whitespace: \n($source)" 
+				"Remove whitespace from the source."
+				$"Whitespace in provided error source" 
+				'error')
+		}
+		$"(('Error' | ans red) + ':' | ans attr_bold)   ('×' | ans red) (if $source != null {$source} else {''} | fmt cmd | $in + ': ')($title | do-if --not $no_title {ans attr_bold })"
+		| do-if ($message != null) { $in + "\n" + ($message + "\n" | str replace --all -m '^(.*)$' ' │ $1')	}
+		| do-if ($hint != null) { $in + $"\n("Hint" | ans blueviolet attr_bold): ($hint)" }
+		| print $in
+		exit 1
+	}
+
+	_error $message $hint $title $source
 }
 
 # Get the base type of a value provided either as an argument or from the input. 
 # Base types comprise 'list', 'record', and all basic types. Tables are recognized as lists.
 def type-of [value: any]: nothing -> string {
-	$value 
-	| describe --detailed 
+	$value
+	| describe --detailed
 	| get type
 }
 
@@ -629,7 +677,7 @@ def type-of [value: any]: nothing -> string {
 def traverse [
 	closure?: closure            # If given, run this closure on every basic value. Parameters: the input value (any). Input: the basic value (any).
 	--structured (-s): closure   # If given, run this closure on structured values themselves and use the output for further traversal. Parameters: the input value (any). Input: the structured value (any). 
-	--keep-input (-k)            # Output the input unchanged.
+	--keep-input (-k)    	     # Output the input unchanged.
 ]: any -> any {
 	let input = $in | collect
 	def _traverse [closure: closure, structured: closure]: any -> any {
@@ -665,7 +713,7 @@ def traverse [
 # Check that the input list has only one non-nothing item. If so, return it. Otherwise error with given message.
 def filter-one [
 	multiple: any               # (string | closure) If multiple items match, error with the given message string or execute the given closure on matching items and return the result. Input: matching items (list<any>). Parameters: input list (list<any>). Output: string.
-	none_err?: string           # If given, error with the given message if no items match.
+	none_err?: any              # (string | record) If given, error with the given string or description if no items match. Error description syntax is the same as 'error' command.
 	--allow-none (-n)           # If given, don't error if no items match.
 	--predicate (-p): closure   # If given, test whether elements in the input list fullfill this predicate instead. Input: input list (list<any>). Parameters: repeat item (any). Output: bool.
 ]: list<any> -> any {
@@ -680,7 +728,7 @@ def filter-one [
 	$input
 	| filter ($predicate | default {|it| $it != null})
 	| match ($in | length) {
-		0 => { do-if --not ($none_err == null) { error $none_err } },
+		0 => { do-if ($none_err != null) { error $none_err } },
 		1 => { $in | first },
 		_ => {
 			if $multiple_type == closure {
@@ -695,28 +743,31 @@ def filter-one [
 # Check type of input, and throw an error if it doesn't match.
 def check-type [
 	...types: string          # Type descriptions to check for. Syntax is the same as 'describe' command output.
-	--cmd-name (-c): string   # Name of the command to auto-generate an error message from.
-	--err-msg (-m): closure   # A closure to generate a customized error message with. Parameters: input value (any), input value type (string), an English recounting of accepted types (string).
+	--source (-s): string     # Source of the value. If given, create an error message with the source.
+	--err-msg (-m): closure   # A closure to generate a customized error message with. Parameters: input value (any), input value type (string), an English recounting of accepted types (string). Expected output: {message: string, hint: hint}.
+	--loc-str (-l): string    # A string describing where the value came from. If given, generate an error message with this string.
 	--structured (-e)         # Match nested/structured data types, instead of just the base type.
 	]: any -> any {
 	let input = $in
 
-	[
-		{'--cmd-name (-c)': $cmd_name}
-		{'--err-msg (-m)': $err_msg}
-	]
-	| (filter-one
-		{|matches| error $"check-type: You provided ($matches | columns | recount --and) flags. Please provide only one." } 
-		$'check-type: You must provide at least one of the flags ($in | columns | recount).' 
-		--predicate {|it| ($it | values).0 != null})
-
-	$types | _check-type {types: ['list<string>'], cmd_name: 'check-types', structured: true}
-	$input | _check-type {types: $types, cmd_name: $cmd_name, structured: $structured}
+	let error = (
+		[
+			[name       value       flag             ];
+			[source     $source     '--source (-s)']
+			[err-msg    $err_msg    '--err-msg (-m)' ]
+			[loc-str    $loc_str    '--loc-str (-l)' ]
+		] 
+		| filter-one --predicate {|row| $row.value != null}
+			{error -s 'check-type' --title "Multiple flags provided" $"You provided ($in | columns | recount --and) flags. Please provide only one." }
+			{source: 'check-type', title: 'Necessary flags are not provided', message: $'You must provide at least one of the flags ($in | columns | recount).' }
+	)
+	$types | _check-type {types: ['list<string>'], source: 'check-types', structured: true}
+	$input | _check-type {types: $types, source: $source, structured: $structured}
 	
-	def _check-type [args: record<types: list<string>, cmd_name: any, structured: bool>]: any -> nothing {
+	def _check-type [args: record<types: list<string>, source: any, structured: bool>]: any -> nothing {
 		let value = $in
 		let types = $args.types
-		let cmd_name = $args.cmd_name
+		let source = $args.source
 		let structured = $args.structured
 
 		if $structured {
@@ -725,14 +776,18 @@ def check-type [
 			$value | is-type ...$types
 		}
 		| if not $in {
-			let types_str: string = $types	| recount
+			let types_str: string = $types	| each {fmt type} | recount --no-quotes
 			let value_type: string = $value | describe
-			let err_msg: string = (
-				$err_msg
-				| default { $"($cmd_name): Expected a value with a type of ($types_str). Found value of type \"($value_type)\":\n($value)"}
-				| do $in $value $value_type $types_str
-			)
-			error $err_msg
+			match $error.name {
+				source => { source: $error.value, message: $"The given value has a type of ($value_type | fmt type): \n($value)", hint: $"Accepted types are ($types_str)." }
+				loc-str => { message: $"The specified value ($error.value) has a type of ($value_type | fmt type): \n($value)", hint: $"Accepted types are ($types_str)." }
+				err-msg => { 
+					do $error.value $value $value_type $types_str 
+					| err-if ((not ($in | is-type 'record')) or ($in.message? == null or $in.hint? == null)) $"check-type: Output of the closure passed in with --err-msg \(-m\) flag doesn't match the type ('record<message: string, hint: string, title?: string>' | fmt type)."
+				}
+			}
+			| {title: "Type mismatch", ...$in}
+			| error $in
 		}
 	}
 
@@ -741,8 +796,9 @@ def check-type [
 
 # Check whether the input matches a given list of types.
 def is-type [
-	...types: string          # Type descriptions to check for. Syntax is the same as 'describe' command output.
-	--structured (-e)         # Match nested/structured data types, instead of just the base type.
+	...types: string    # Type descriptions to check for. Syntax is the same as 'describe' command output.
+	--structured (-e)   # Match nested/structured data types, instead of just the base type.
+	--not               # Negate the result.
 	]: any -> any {
 	let value = $in
 	let value_type: string = do {
@@ -770,6 +826,7 @@ def is-type [
 		($value | is-empty ) and
 		($types | any {($in | get-basic-type) == 'list'})
 	)
+	| $in xor $not
 }
 
 # Get the basic type from a type description.
@@ -794,11 +851,11 @@ def err-if-any [
 # Check the input against a condition and error if check passes.
 def err-if [
 	condition: bool   # A condition to check for.
-	err_msg: string   # An error message.
+	message: any      # (string | record) An error message string or a record with fields <message: string, title?: string, hint?: string> to display.
 	--not             # Negate the condition.
 ]: any -> any {
 	do-if ($condition xor $not) {
-		error $err_msg
+		error $message
 	}
 }
 
@@ -830,11 +887,6 @@ def all-in [
 	} else {
 		all {|it| $it in $operand }
 	}
-}
-
-def unexpected-error [situation: string] {
-	# TODO: Implement the error message style explained in https://www.codeproject.com/Articles/7482/User-Friendly-Exception-Handling-2.
-	$"An unexpected error occurred. We're sorry about this. In order for this issue to be fixed as soon as possible, please report it at ($"($GITHUB_URL)/issues" | ansi link | ans blue) with the following information: \nCause of error: ($situation) \n($NAME) version: ($VERSION)".
 }
 
 # Create a file name from a URL.
@@ -890,10 +942,65 @@ def arw [length: int]: nothing -> string {
 	
 }
 
-def ans [code: string]: string -> string {
-	# let reset: string = match $code {
-	# 	'attr_bold' => '21m',
-	# 	_ => '39m'
-	# }
-	$"(ansi $code)($in)(ansi reset)"
+def ans [...code: string]: string -> string {
+	with {|str|
+		$code
+		| reduce -f $str {|it, acc|
+			$"(ansi $it)($acc)"
+		}
+		| $"($in)(ansi reset)"
+	}
+}
+
+# Ensure a directory exists at a certain path.
+def ensure-dir [
+	dir_path: path   # The path to directory.
+	--empty          # Error if directory already exists AND is not empty.
+] {
+	let path: path = $dir_path | path split | path join
+	if not ($path | path exists) {
+		mkdir $path
+	}
+	let type: string = (ls -D $path).type.0
+	if $type != dir {
+		error $"Can't create the directory ($path). There is already an item named ($path | path basename | fmt $type) in ($path | path dirname | fmt dir)."
+	}
+	if $empty and (ls $path | is-not-empty) {
+		error $"Can't create the directory ($path | fmt dir). There is already a non-empty directory at ($path | fmt dir)\"."
+	}
+}
+
+# Format an item for display in terminal output.
+def fmt [type?: string]: string -> string {
+	let path = $in
+	let type = (
+		$type | default (
+			do-if ($path | path exists) {
+				ls -D $path
+				| get 0.type
+			}
+		)
+	)
+	match $type {
+		'file'    => [ olive ]
+		'dir'     => [ light_cyan ]
+		'symlink' => [ xpurplea ]
+		'cmd'     => [ light_purple_bold ]
+		'depset'  => [ light_blue_bold ]
+		'dep'     => [ darkorange3b attr_bold ]
+		'input'   => [ grey62 ]
+		'key'     => [ mediumturquoise attr_bold]
+		'type'    => [ cyan ]
+	}
+	| with {|code|
+		$path
+		| do-if ($type == dir) { path split | path join | $in + $path_separator }
+		| do-if ($type == input) { $'"($in)"'}
+		| do-if ($code != null) { ans ...$code }
+	}
+}
+
+def rgx-contains [regex: string]: string -> bool {
+	str replace -r $"^\(?:\(($regex)\)|.\)*$" '$1' 
+	| is-not-empty
 }
