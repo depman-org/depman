@@ -25,10 +25,10 @@ It can replace (or build upon) tools as diverse as Make, Meson, Nix, Travis, GH 
 ### Values 
 Ordered by priority:
 
-1. **Security**: Depman will warn you and not proceed if any your dependencies have changed a literal bit. It will never auto-update dependencies.
+1. **Security**: Depman will stop and warn you if any your dependencies have changed a literal bit. It will never auto-update any input.
 2. **Minimalism**:
     - In behavior: The usage manual (following two sections of this file) shouldn't exceed 5 minutes in reading time.
-    - In implementation: The total LoC should remain below 1000.
+    - In implementation: The total LoC should always remain below 1000.
 3. **Convenience**: The most convenient UX possible that gets out of your way and lets you do your job with the least amount of friction.
 
 ## The files

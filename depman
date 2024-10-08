@@ -34,9 +34,8 @@ def main [
 	...depsets: string   # The dependency sets to obtain the dependencies in and give them to the command.
 	--dir (-d): path     # Use a different directory for depman to operate in
 	--debug (-b)         # For debugging.
-]: nothing -> nothing {
+]: nothing -> nothing { ignore
 	$env.prt_json = $debug
-
 	let depsets: list<string> = (
 		$depsets 
 		| do-if ($in | is-empty) { ['default'] }
@@ -80,13 +79,10 @@ def main [
 	}
 	let dep_locks: any = parse_lockfile
 	let all_commands: table<name: string, fresh-start: bool, out-dir: path> = parse_commands $config
-	# $all_commands | each {} # This pattern is used to raise the errors contained within the value.
 	let command: string = $command | default $depman_config.default-command
 	err-if ($command not-in $all_commands.name) $"The given command ($command | fmt cmd) cannot be found in ($depman_config.commands_script | fmt)."
 	let dependencies = parse_dependencies
-	$dependencies | each { get sources | each {} }
 	let all_depsets = parse_depsets $config $dependencies
-	$all_depsets | each {}
 	$depsets
 	| all-in $all_depsets.name --error {|depset| $"The specified depset ($depset | fmt depset) cannot be found in ($config_toml | fmt) or ($depman_config.dependencies_file | fmt)."}
 	$depsets
@@ -122,7 +118,7 @@ def main [
 		| run-if ($in | any {ls -a $in.dir | is-empty}) {
 			say -i 1 'Obtaining dependencies for depset ' ($depset | fmt depset)
 		}
-		| run-par-each {|dep|
+		| run-each {|dep|
 			mkdir $dep.dir
 			if (ls -a $dep.dir | is-empty) {
 				[
@@ -131,18 +127,25 @@ def main [
 				]
 				| str join "\n"
 				| say $in "\n"
-				do $dep.cmd
-				| complete 
-				| if $in.exit_code != 0 {
-					error $"Can't obtain the dependency ($dep.name | fmt dep)."
+				try { 
+					do $dep.cmd
+					| if ($in | is-type --structured 'record<stdout: string, stderr: string, exit_code: int>' ) {
+						if $in.exit_code != 0 {
+							error $in.stderr --title $"Can't obtain the dependency ($dep.name | fmt dep)"
+						}
+					}
+				} catch {|err| 
+					$err 
+					| parse-error
+					| update title {$"Can't obtain dependency ($dep.name | fmt dep): ($in | ans attr_bold)" }
+					| error $in
 				}
 			}
 		}
 		| run {|deps|
-			say ""
 			say -i 1 $"Running the command ($command | fmt cmd)..."
 			let dependency_dirs = $deps | select name dir | transpose -rd
-			let source_dir: path = $dir | path parse | get parent | err-if ($in == null) "You can't use the system root directory as the depman directory."
+			let source_dir: path = $dir | path parse | get parent | err-if ($in == null) $"You can't use the system root directory as the ($NAME) directory."
 			let out_dir: path = (
 				$all_commands
 				| where name == $command
@@ -164,18 +167,23 @@ def main [
 			| nu --stdin -c $"
 				let args = $in | from nuon
 				cd '($out_dir)'
-				use '($depman_config.commands_script)';q
+				use '($depman_config.commands_script)';
 				commands ($command) $args.dependency-dirs $args.source-dir $args.out-dir
 				ignore
 			"
-			say -i 1 $"Successfully ran ($command | fmt cmd)."
+			| complete
+			| if $in.exit_code != 0 {
+				error ($"The command aborted with exit code ($in.exit_code | ans xred).\n" + $in.stderr) --title $"Error running the command ($command | fmt cmd)"
+			} else {
+				say -i 1 $"Successfully ran ($command | fmt cmd)."
+			}
 		}
 	}
 
 	def determine_lock [
 		depset_config: record
 		dep_name: string
-	]: nothing -> bool {
+	]: nothing -> bool { ignore
 		let in_lock_list = $dep_name in $depset_config.lock-list
 		let in_no_lock_list = $dep_name in $depset_config.no-lock-list
 		let default = $depset_config.lock
@@ -185,19 +193,19 @@ def main [
 	def compute_cmd [
 		cache_dir: path
 		source_value: record<type, description, depman-cmd> 
-	]: nothing -> record<cmd: closure, cmd-str: string> {
+	]: nothing -> record<cmd: closure, cmd-str: string> { ignore
 		{$source_value.type: $source_value.description}
 		| match $in {
 			{git: $repo} => {
 				let ref = [$repo.commit? $repo.branch?] | where $it != null | get -i 0
 				if $ref != null {
 					{ 
-						cmd: { git clone -b $ref $repo.url $cache_dir },
+						cmd: { git clone -b $ref $repo.url $cache_dir | complete },
 						cmd-str: $"git clone -b '($ref)' '($repo.url)' '($cache_dir)'"
 					}
 				} else {
 					{
-						cmd: { git clone $repo.url $cache_dir },
+						cmd: { git clone $repo.url $cache_dir | complete },
 						cmd-str: $"git clone '($repo.url)' '($cache_dir)'"
 					}
 				}
@@ -206,29 +214,35 @@ def main [
 				let redirect_mode: string = $request.redirect-mode? | default 'error'
 				let file_path: path = [$cache_dir ($request.url | url to-filename )] | path join
 				{
-					cmd: { http get --redirect-mode $redirect_mode $request.url | save -f $file_path},
+					cmd: { http get --redirect-mode $redirect_mode $request.url | save -f $file_path },
 					cmd-str: $"http get --redirect-mode '($redirect_mode)' '($request.url)' \n| save -f '($file_path)'"
 				}
 			},
 			{path: $path} => {
-				cmd: { cp -r $path $cache_dir },
-				cmd-str: $"cp -r '($path)' '($cache_dir)'"
+				let path: path = $path | path expand --strict
+				if $path ends-with $path_separator {{ 
+					cmd: {cp -r ($path) ($cache_dir)},
+					cmd-str: $"cp -r ($path) '($cache_dir)'"
+				}} else {{
+					cmd: {cp ($path) ($cache_dir)} 
+					cmd-str: $"cp ($in) ($path) '($cache_dir)'"	 
+				}}
 			},
 			{rsync: $source} => {
-				let source = ($source | str trim -r -c '/')
+				let source = $source | path expand --strict | str trim -r -c '/'
 				{
-					cmd: {rsync -az $source $cache_dir},
+					cmd: {rsync -az $source $cache_dir | complete },
 					cmd-str: $"rsync -az '($source)' '($cache_dir)'"
 				}
 			},
 			{cmd: $command} => {
-				cmd: { $env.out_dir = $cache_dir; nu -c $command },
+				cmd: { $env.out_dir = $cache_dir; nu -c $command | complete },
 				cmd-str: $"nu -c '($command)'"
 			}
 		}
 	}
 
-	def parse_depsets [config: record, dependencies: any]: any -> any { # nothing -> table<name: string, lock: bool, lock-list: list<string>, no-lock-list: list<string>, deps: list<string>> {	
+	def parse_depsets [config: record, dependencies: any]: nothing -> table<name: string, lock: bool, lock-list: list<string>, no-lock-list: list<string>, deps: list<string>> { ignore	
 		$config.depsets?
 		| default {}
 		| transpose name value
@@ -290,8 +304,8 @@ def main [
 		}
 	}
  
-	def parse_commands [config: record]: nothing -> table<name: string, fresh-start: bool, out-dir: path> {
-		def parse_commands_script []: nothing -> list<string> {
+	def parse_commands [config: record]: nothing -> table<name: string, fresh-start: bool, out-dir: path> { ignore
+		def parse_commands_script []: nothing -> list<string> { ignore
 			nu -c $"
 				use ($depman_config.commands_script);
 				scope modules
@@ -299,6 +313,11 @@ def main [
 				| get commands.0.name
 				| to nuon
 			"
+			| complete
+			| do-if ($in.exit_code != 0) {
+				error ($"Error parsing the commands script ($depman_config.commands_script | fmt file).\n($in.stderr)") --title $"Can't parse ('commands.nu' | fmt file)"
+			}
+			| get stdout
 			| from nuon
 		}
 		let defined_commands = parse_commands_script
@@ -339,9 +358,13 @@ def main [
 			}
 			| {name: $it.name, ...$in}
 		}
+		| run {
+			get name
+			| err-if-any {|name| $name in [cache retrieve obtain update]} {|cmd| {message: $"One of the commands you defined in ($depman_config.commands_script | fmt file) uses reserved name ($cmd | fmt cmd).", title: "Command uses reserved name", hint: "Rename the command."}}
+		}
 	}
 	
-	def parse_lockfile []: nothing -> any {
+	def parse_lockfile []: nothing -> any { ignore
 		do-if ($depman_config.lockfile | path exists) {
 			open $depman_config.lockfile
 			| from json
@@ -360,7 +383,7 @@ def main [
 			commands_script: path,
 			default-command: string
 		>
-	] {
+	] { ignore
 		$config.depman?
 		| default {}
 		| check-type 'record' -m {$'Invalid value for key "depman" in "($config_toml)". Type of the value must be record.'}
@@ -382,7 +405,7 @@ def main [
                     depman-cmd: string
                 >
             >
-        >] {
+        >] { ignore
 		do-if ($depman_config.dependencies_file | path exists) {
 			open-toml $depman_config.dependencies_file
 			| default {}
@@ -412,10 +435,9 @@ def main [
 				| transpose depset value
 				| update value {|source|
 					let key_loc_str: string = (
-						if $source.depset != default { 
-							$' in depset "($source.depset)" for dependency "($dep.name)"'
-						} else {
-							$' for dependency "($dep.name)"'
+						$' for dependency ($dep.name | fmt dep)'
+						| do-if ($source.depset != default) { 
+							$' in depset ($source.depset | fmt depset)' + $in
 						}
 					)
 
@@ -462,6 +484,11 @@ def main [
 								| check-type 'string' --err-msg {|value, value_type|
 									$"The given value for the ($source_value.type) source($key_loc_str) has a type of \"($value_type)\": \n($value) \n\nType of the value must be string."
 								}
+								| do-if ($source_value.type in ['path' 'rsync']) {
+									try { path expand --strict } catch { 
+										error --title "Can't find path" $"The given ($source_value.type) source($key_loc_str) can't be expanded: ($source_value.description | fmt path)" --hint "Is there an item at the specified path?"
+									}
+								}
 							},
 							_ => { error $'Unrecognized source type "($source_value.type)"($key_loc_str) for dependency "($dep.name)".' }
 						}
@@ -479,7 +506,7 @@ def main [
 # Initiate Depman in your project.
 def 'main init' [
 	project_dir?: path   # Path to the project directory. (default: current directory)
-]: nothing -> nothing {
+]: nothing -> nothing { ignore
 	let project_dir: path = $project_dir | default '.'
 	let depman_dir = [$project_dir $DEPMAN_DIR] | path join
 	err-if ($depman_dir | path exists) $"The directory \"($depman_dir)\" already exists. If you want to re-initialize ($NAME), remove it before running \"($CLI_NAME) init\"."
@@ -494,15 +521,20 @@ def 'main init' [
 	}
 }
 
-def open-toml [path: path]: nothing -> record {
+def open-toml [path: path]: nothing -> record { ignore
 	try {
 		open $path
-	} catch {|err| 
-		$err.debug 
-		| parse --regex '"(?<help>TOML parse error.+)"' 
-		| get help.0
-		| str replace --all '\n' "\n"
-		| str replace --regex '(at line \d+, column \d+)' $'$1 in file ($path | ans teal):'
+	} catch {|err|
+		$err
+		| parse-error
+		| update title "TOML parse error"
+		| update message {|rec|
+			$err.debug
+			| parse -r '(?<hint>TOML parse error at line \d+, column \d+)'
+			| get 0.hint
+			| $in + $' in file ($path | fmt file).'
+		}
+		| reject hint
 		| error $in
 	} 
 }
@@ -619,7 +651,7 @@ def error [
 	--hint (-h): string     # (optional) Display a hint
 	--title (-t): string    # (optional) Display a title
 	--source (-s): string   # (optional) Display a source for the error
-]: nothing -> nothing {
+]: nothing -> nothing { ignore
 	let record = do-if ($message | is-type record) {$message}
 	if $record != null and (
 		($record.message? | is-type --not string) or
@@ -627,7 +659,7 @@ def error [
 		($record.title? | is-type --not string nothing) or
 		($record.source? | is-type --not string nothing) or
 		not ($record | columns | all-in [message hint title source])
-	) { 
+	) {
 		(_error $"The given error message doesn't match type ('record<message: string, hint?: string, title?: string, source?: string>' | fmt type): \n\n($record)" 
 			$"Run ('error --help' | fmt cmd) for more information."
 			$"Type mismatch" 
@@ -649,25 +681,32 @@ def error [
 				$"Newlines in provided error text" 
 				'error')
 		}
-		if $source != null and ($source | rgx-contains '\s') {
+		if $source != null and ($source | parse -r '\s' | is-not-empty) {
 			(_error $"The source of the provided error contains whitespace: \n($source)" 
 				"Remove whitespace from the source."
 				$"Whitespace in provided error source" 
 				'error')
 		}
-		$"(('Error' | ans red) + ':' | ans attr_bold)   ('×' | ans red) (if $source != null {$source} else {''} | fmt cmd | $in + ': ')($title | do-if --not $no_title {ans attr_bold })"
-		| do-if ($message != null) { $in + "\n" + ($message + "\n" | str replace --all -m '^(.*)$' ' │ $1')	}
-		| do-if ($hint != null) { $in + $"\n("Hint" | ans blueviolet attr_bold): ($hint)" }
+		$"(('Error' | ans red) + ':' | ans attr_bold)   ('×' | ans red) (if $source != null {$source | ans navy attr_bold | $in + ': '} else {''} )($title | do-if --not $no_title {ans attr_bold })"
+		| do-if ($message != null) { 
+			$in + "\n ├\n" + (($message | str trim) + (if $hint != null {"\n"} else {''}) | str replace --all -m '^(.*)$' $" │ $1")
+			| if ($hint == null) { 
+				$in + "\n └" 
+			} else {
+				$in + "\n ╰── "
+			}
+		}
+		| do-if ($hint != null) { $in + ($'hint: ($hint)' | ans blueviolet attr_bold) }
 		| print $in
 		exit 1
 	}
-
+	
 	_error $message $hint $title $source
 }
 
 # Get the base type of a value provided either as an argument or from the input. 
 # Base types comprise 'list', 'record', and all basic types. Tables are recognized as lists.
-def type-of [value: any]: nothing -> string {
+def type-of [value: any]: nothing -> string { ignore
 	$value
 	| describe --detailed
 	| get type
@@ -838,7 +877,7 @@ def get-basic-type []: string -> string {
 # The difference with each { err-if } is err-if-any will only accept list input.
 def err-if-any [
 	condition: closure   # A condition to check with every item. Input: repeat item (any). Parameters: repeat item (any). Output: bool.
-	error_msg: closure   # A closure to generate an error message with. Input: failed item (any). Parameters: failed item (any), input list (list<any>). Output: string.
+	error_msg: closure   # A closure to generate an error message with. Input: failed item (any). Parameters: failed item (any), input list (list<any>). Output: (string | record).
 	--not                # Negate the condition.
 ]: [list<any> -> list<any>] {
 	let list = $in
@@ -891,7 +930,7 @@ def all-in [
 
 # Create a file name from a URL.
 def 'url to-filename' []: string -> string {
-	alias get_last_component = str replace -r '^.*?(?:[/\\]([^/\\]{3,255})[^/\\]*)?$' '$1'
+	def get_last_component []: string -> string { parse -r '^.*?([/\\](?<it>[^/\\]{3,255})[^/\\]*)?$' | get it.0 }
 	$in
 	| url parse
 	| with {|it|
@@ -900,7 +939,7 @@ def 'url to-filename' []: string -> string {
 		| get_last_component
 		| path sanitize
 		| do-if (($in | str length) < 3) {
-			$it.host + ($it.path | decode)
+			$it.host + ($it.path | url decode)
 			| path sanitize
 		}
 	}
@@ -920,7 +959,7 @@ def "path sanitize" []: string -> string {
 # Find a directory in parent directories. If not found, returns nothing.
 def find-dir [ 
 	dir_name: string   # Name of the directory to find.
-]: nothing -> any {
+]: nothing -> any { ignore
 	if ($env.PWD | path parse | get parent | is-empty) {
 		return null
 	}
@@ -934,7 +973,7 @@ def find-dir [
 	}
 }
 
-def arw [length: int]: nothing -> string {
+def arw [length: int]: nothing -> string { ignore
 		1..($length - 1)
 		| if $length > 1 { each { ' ' } }
 		| str join ''
@@ -982,12 +1021,13 @@ def fmt [type?: string]: string -> string {
 		)
 	)
 	match $type {
+		'path'    => [ xyellow ]
 		'file'    => [ olive ]
 		'dir'     => [ light_cyan ]
 		'symlink' => [ xpurplea ]
 		'cmd'     => [ light_purple_bold ]
 		'depset'  => [ light_blue_bold ]
-		'dep'     => [ darkorange3b attr_bold ]
+		'dep'     => [ yellow_bold ]
 		'input'   => [ grey62 ]
 		'key'     => [ mediumturquoise attr_bold]
 		'type'    => [ cyan ]
@@ -1000,7 +1040,29 @@ def fmt [type?: string]: string -> string {
 	}
 }
 
-def rgx-contains [regex: string]: string -> bool {
-	str replace -r $"^\(?:\(($regex)\)|.\)*$" '$1' 
-	| is-not-empty
+def parse-error []: record<msg: string, debug: string, raw: error> -> record<title: string, message: string, hint: string> {
+	let $err = $in | check-type --structured 'record<msg: string, debug: string, raw: error>' --source 'parse-error' # todo check actually matters
+	let type = $err.debug | parse -r '^(?<type>\w+)' | get 0.type
+	$err.debug
+	| str replace -r $'^($type) ' ''
+	| str replace --all -r 'Some\((.*?)\)' '$1'
+	| str replace --all -r ', \w+: Span {.+?}' ''
+	| from nuon
+	| with {|struct|
+		let message = (
+			match $type {
+				UnsupportedInput => {
+					$struct.input | parse "value: '\"{value}\"'"
+					| $"($struct.msg)\nThe received input: ($in)"
+				}
+				DirectoryNotFound => { $"Can't find the directory at path ($struct.dir | fmt dir)" }
+				_ => { $struct.msg }
+			}
+		)
+		{
+			title: $err.msg,
+			message: $message,
+			hint: $struct.help?
+		}
+	}
 }
