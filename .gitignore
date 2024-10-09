@@ -1,2 +1,4 @@
-.aider*
+/deps/
 /scratchpad/
+/depman/cache/
+/depman/artifacts/

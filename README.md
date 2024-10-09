@@ -245,4 +245,4 @@ Nix can indeed do everything Depman can do. Depman can also build upon Nix and b
 
 ## Contributing
 
-Please discuss with me before making a PR. I consider this project to be very limited in scope and very minimalistic. Whatever is in the v1 release is not intended to change much. You can see the current roadmap [here](./roadmap.md).
+Please discuss with me before making a PR. I consider this project to be very limited in scope and very minimalistic. Whatever is in the v1 release is not intended to change much. You can see the current roadmap [here](docs/roadmap.md).
