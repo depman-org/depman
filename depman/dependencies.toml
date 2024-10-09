@@ -1,0 +1,5 @@
+[nuitron]
+git.url = "https://github.com/rayanamal/nuitron.git"
+
+[depman]
+git.url = "git@github.com:rayanamal/depman.git"
