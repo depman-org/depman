@@ -2,4 +2,5 @@
 git.url = "https://github.com/rayanamal/nuitron.git"
 
 [depman]
-git.url = "git@github.com:rayanamal/depman.git"
+git.url = "https://github.com/depman-org/depman.git"
+git.commit = "ad44346"

@@ -15,7 +15,7 @@ export def 'prepare-dev' [dependency_dirs, source_dir, out_dir] {
     cp ($dependency_dirs.nuitron | path join mod.nu) ('deps' | path join 'nuitron')
 }
 
-# Test that the depman in development can build a previous version of depman and the build result works
+# Test that the depman in development can build a previous version of depman and the build result works.
 export def test [dependency_dirs, source_dir, out_dir] {
     cd $source_dir
     depman build
@@ -23,5 +23,6 @@ export def test [dependency_dirs, source_dir, out_dir] {
     cd $dependency_dirs.depman
     run-external $depman_fresh build
     let depman_v010: path = ([$dependency_dirs.depman 'depman' 'artifacts' 'build' 'depman'] | path join)
+    print ""
     run-external $depman_v010 '--version'
 }
