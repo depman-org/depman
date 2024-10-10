@@ -1,6 +1,7 @@
 [nuitron]
 git.url = "https://github.com/rayanamal/nuitron.git"
-git.commit = "44c28f3"
-
-[depman]
-git.url = "git@github.com:rayanamal/depman.git"
+git.commit = "81dcc0b"
+ 
+[depman-v001]
+git.url = "https://github.com/depman-org/depman.git"
+git.commit = "dcc0bae0"

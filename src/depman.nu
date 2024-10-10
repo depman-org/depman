@@ -17,6 +17,7 @@ const default_paths = {
 use  ../deps/nuitron *
 
 $env.nuitron_exit_on_error = true
+$env.nuitron_error_exit_code = 0
 let nu_version: string = try { (version).version } catch { 'unknown' }
 if $nu_version != $NU_VERSION {
 	error $"Your Nushell version is not compatible with ($NAME). Required Nushell version is ($NU_VERSION | style green).\nYou can download different versions of Nushell here: https://github.com/nushell/nushell/releases"
@@ -126,7 +127,7 @@ def main [
 			if (ls -a $dep.dir | is-empty) {
 				[
 					(say -o -i 2 "Obtaining dependency " ($dep.name | fmt dep) '...')
-					...($dep.cmd-str | lines | each {|line| say -o -i 3 $line })
+					...($dep.cmd-str | lines | each {|line| say -o -i 3 --ansi grey58 $line })
 				]
 				| str join "\n"
 				| say $in "\n"
@@ -211,11 +212,18 @@ def main [
 		{$source_value.type: $source_value.description}
 		| match $in {
 			{git: $repo} => {
-				let ref = [$repo.commit? $repo.branch?] | where $it != null | get -i 0
-				if $ref != null {
-					{ 
-						cmd: { git clone -b $ref $repo.url $cache_dir | complete },
-						cmd-str: $"git clone -b '($ref)' '($repo.url)' '($cache_dir)'"
+				if $repo.branch? != null {
+					{
+						cmd: { git clone -b $repo.branch? $repo.url $cache_dir | complete },
+						cmd-str: $"git clone -b '($repo.branch?)' '($repo.url)' '($cache_dir)'"
+					}
+				} else if $repo.commit? != null {
+					{
+						cmd: { 
+							do { git clone $repo.url $cache_dir | complete }
+							| do-if ($in.exit_code == 0) { git -C $cache_dir checkout $repo.commit? | complete }
+						},
+						cmd-str: $"git clone '($repo.url)' '($cache_dir)' \ncd $cache_dir\ngit checkout '($repo.commit?)'"
 					}
 				} else {
 					{
@@ -250,7 +258,7 @@ def main [
 				}
 			},
 			{cmd: $command} => {
-				cmd: { $env.out_dir = $cache_dir; nu -c $command | complete },
+				cmd: { $env.dep-dir = $cache_dir; nu -c $command | complete },
 				cmd-str: $"nu -c '($command)'"
 			}
 		}
@@ -525,6 +533,12 @@ def 'main init' [
 	let depman_dir = [$project_dir $DEPMAN_DIR] | path join
 	err-if ($depman_dir | path exists) $"The directory \"($depman_dir)\" already exists. If you want to re-initialize ($NAME), remove it before running \"($CLI_NAME) init\"."
 	mkdir $depman_dir
+	let gitignore = [$project_dir '.gitignore'] | path join
+	if ($gitignore | path exists) {
+		open $gitignore | collect
+		| $in + "\n/depman/cache/\n/depman/artifacts/"
+		| save -f $gitignore
+	}
 	if (ls $depman_dir | is-empty) {
 'export def build [dependency_dirs, source_dir, out_dir] {
 	# Write your build script here.
@@ -532,5 +546,6 @@ def 'main init' [
 }
 '
 		| save -f ([$depman_dir 'commands.nu'] | path join)
+		
 	}
 }
