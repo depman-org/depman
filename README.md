@@ -1,5 +1,5 @@
 ### Caution!
-This project is in alpha stage. This means many of the features below are not implemented yet.
+This project is in alpha stage, which means many of the features described here are not implemented yet. That said, Depman is self-hosted today and uses itself for its own development, build and testing, all under 600 lines of code.
 
 ## What is Depman?
 
@@ -13,11 +13,12 @@ It can replace (or build upon) tools as diverse as Make, Meson, Nix, Travis, GH 
 
 ## Features
 - **General purpose**: No assumptions about language, project type, ecosystem, or tooling.
-- **Flexible**: You 'just write a shell script'. There is no DSL or programming language (besides Nushell).
+- **Flexible**: You 'just write a (nu)shell script'. There is no DSL or programming language to learn.
+- **Single script**: Did you ever want to distribute your build system with your project? No? Now you can do it!
 - **Interoperable**: Everything Depman does happens in a single self contained 'depman/' directory anywhere in your project.
-- **Isolated**: Everything is fully isolated from your system with rootless containers.
+- **Secure**: Builds are fully isolated from your system with [Syd](https://crates.io/crates/syd) and containers.
 - **Reproducible (Repeatable)**: Inputs *and* outputs are pinned with their content hashes.
-- **Fast**: Caches as much as possible.
+- **Fast**: Incremental caching.
 - **Cross-platform**: Works on Linux, MacOS and Windows.
 - **Backwards & forwards compatible**: Any version of Depman can build a project using any version of Depman.
 - **Modern**: Written in Nushell, a statically typed, functionally oriented cross-platform shell and programming language written in Rust.
@@ -90,13 +91,13 @@ windows.path = '~/editor-assets/tutorial-windows.mp4'
 # For every dependency, the source specified without a depset prefix is in the depset named 'default'.
 
 [image-helper]
-# Command to execute in nushell, with the output directory given in the $out_dir environment variable.
-cmd = 'cd ./image-helper; cargo build --release --root $env.out_dir'
-windows.cmd = 'cd ./image-helper; cargo build --release --root $env.out_dir --target x86_64-pc-windows-gnu'
-macos.cmd = 'cd ./image-helper; cargo build --release --root $env.out_dir --target x86_64-apple-darwin'
+# Command to execute in nushell, with the output directory given in the $env.dep-dir environment variable.
+cmd = 'cd ./image-helper; cargo build --release --root $env.dep-dir'
+windows.cmd = 'cd ./image-helper; cargo build --release --root $env.dep-dir --target x86_64-pc-windows-gnu'
+macos.cmd = 'cd ./image-helper; cargo build --release --root $env.dep-dir --target x86_64-apple-darwin'
 
 # Another depset solely for developing it (compile without --release optimizations)
-helper-dev.cmd = 'cd ./image-helper; cargo build --root $env.out_dir'
+helper-dev.cmd = 'cd ./image-helper; cargo build --root $env.dep-dir'
 
 [download-stats]
 # rsync source.
@@ -188,9 +189,9 @@ depman {flags} <command> ...(depsets)
 
 #### Execution:
 1. Find the closest `depman/` directory, searching upwards from the current directory.
-2. Create a rootless container and mount the source directory (parent directory of `depman/`) into the container. The rest of the process from here runs entirely inside the container.
+2. Create a rootless container and mount the source directory (parent directory of `depman/`) into the container. The rest of the process from here runs entirely inside a container, to provide a standardized environment for Depman to operate in across platforms.
 3. Acquire dependencies specified in `dependencies.toml`. If a dependency set (depset) is given obtain only the dependencies in the specified depset.
-4. Execute the `<command>` you defined in `commands.nu` with the obtained dependencies' locations given as argument.
+4. Execute the `<command>` you defined in `commands.nu` with the obtained dependencies' locations given as argument. The command is whitelist-sandboxed to be able to only access the directories it should with [Syd](https://crates.io/crates/syd).
 5. That's it!
 
 ### Flags
@@ -214,7 +215,7 @@ depman {flags} <command> ...(depsets)
 ### Subcommands
 -	`depman cache <item> <name>`
 	
-	Cache the given directory or file with the given name. You can use this command to manually cache items which are compute heavy to generate in commands.nu.
+	Cache the given directory or file with the given name. You can use this command to manually cache items which are compute heavy to generate in `commands.nu`.
 
 -	`depman retrieve <name> <dir>`
 	
@@ -222,23 +223,43 @@ depman {flags} <command> ...(depsets)
 
 -	`depman init`: Create an example `depman/` directory in the current directory.
 
+## Installation
+
+1. Install [Nushell](https://www.nushell.sh/book/installation.html). This dependency will be removed before v1 as we implement containerization.
+2. Download the [latest release](https://github.com/depman-org/depman/releases/latest) and extract it anywhere you want (e.g. `~/.local/bin/`).
+
+If you use `git` or `rsync` to obtain your dependencies, they need to present on your system as well. This dependency will also be removed before v1.
+
+## Building & development
+
+1. Make sure you have Depman installed. See [Installation](#installation).
+2. Clone the repo.
+```
+git clone https://github.com/depman-org/depman.git
+```
+3. Inside the repo, run `depman prepare-dev` to prepare the development environment.
+
+In order to build the script (bundle it with its dependencies into a single file) run `depman build`.
+
 ## FAQ
 
-
 ### Why did you create this?
-I was building a complex project for a client which started small but soon required a build system. There were many moving parts, C sources to compile, binaries to bundle, static assets to include. Reliability and reproducibility was a requirement. I evaluated the current mainstream build tools: Bazel, Nix, Make, Dagger, Meson, etc. All of them are either too complex, too inconvenient or too inflexible for the job. So I decided to build a zero learning curve, fully general purpose, zero bloat minimal build tool.
+I was building a complex project for a client which started small but soon required a build system. There were many moving parts, C sources to compile, binaries to bundle, static assets to include. Reliability and reproducibility was a requirement. I evaluated the current mainstream build tools: Bazel, Nix, Make, Dagger, Meson, etc. All of them are either too complex, too inconvenient or too inflexible for the job. So I decided to build a 5 minute learning curve, fully general purpose, zero bloat minimal build tool.
 
 ### Why is using a bash based build script not supported?
 Please take a look at your calendar.
 
+To be serious, bash can't provide some of the necessary functionality like modules and structured data flow, which enable Depman to be so convenient with its low LoC count and complexity.
+
 ### What about Nix?
 
-Nix can indeed do everything Depman can do. Depman can also build upon Nix and benefit from its strengths where it's easier to do something in Nix than in Depman, such as when building OS images. Here are the tradeoffs.
+Nix is the closest tool in spirit to Depman. Here are the tradeoffs:
 
 |                                 | Depman                            | Nix                                                           |
 |---------------------------------|-----------------------------------|---------------------------------------------------------------|
 | Dependency declaration language | TOML                              | Nix                                                           |
 | Build language                  | Nu                                | Nix & Bash                                                    |
+| Build sandbox technology        | Bubblewrap                        | [Syd](https://crates.io/crates/syd)                           |
 | External build programs         | Directly used, e.g `cargo`        | Used by Nix functions calling them, e.g `pkgs.buildRustCrate` |
 | Onboarding/learning time        | 5 minutes                         | 1-2 weeks                                                     |
 | Fully general purpose           | Yes                               | Yes                                                           |
