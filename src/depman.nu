@@ -38,7 +38,7 @@ def main [
 	}
 	if ($command == null) {
 		say -i 1 $"Welcome to ($NAME | style light_green_bold)!\n"
-		say $"Run ($CLI_NAME + ' init' | fmt cmd) to get started, or ($CLI_NAME + ' --help' | fmt cmd) to see the command description."
+		say $"Run ($CLI_NAME + ' init' | ft cmd) to get started, or ($CLI_NAME + ' --help' | ft cmd) to see the command description."
 		exit
 	}
 	let depsets: list<string> = (
@@ -51,7 +51,7 @@ def main [
 		| default ([. $DEPMAN_DIR] | path join)
 	)
 	if not ($dir | path exists) {
-		print $"No ($dir | path basename | fmt dir) directory found. Do you want to create one at path ($dir | fmt dir)? \(Y/n\)"
+		print $"No ($dir | path basename | ft dir) directory found. Do you want to create one at path ($dir | ft dir)? \(Y/n\)"
 		[Yes No] | input list -f
 		| if $in == 'Yes' {
 			main init
@@ -79,16 +79,16 @@ def main [
 	| items {|_, path| ensure-dir $path}
 
 	if not ($depman_config.commands_script | path exists) {
-		error --title 'No commands file' $"Can't find a ($depman_config.commands_script | path basename | fmt file) file in ($dir | fmt dir)." --hint $"Run ($'($CLI_NAME) init' | fmt cmd) to create a starting template."
+		error --title 'No commands file' $"Can't find a ($depman_config.commands_script | path basename | ft file) file in ($dir | ft dir)." --hint $"Run ($'($CLI_NAME) init' | ft cmd) to create a starting template."
 	}
 	let dep_locks: any = parse_lockfile
 	let all_commands: table<name: string, fresh-start: bool, out-dir: path> = parse_commands $config
 	let command: string = $command | default $depman_config.default-command
-	err-if ($command not-in $all_commands.name) $"The given command ($command | fmt cmd) cannot be found in ($depman_config.commands_script | fmt)."
+	err-if ($command not-in $all_commands.name) $"The given command ($command | ft cmd) cannot be found in ($depman_config.commands_script | ft)."
 	let dependencies = parse_dependencies
 	let all_depsets = parse_depsets $config $dependencies
 	$depsets
-	| all-in $all_depsets.name --error {|depset| $"The specified depset ($depset | fmt depset) cannot be found in ($config_toml | fmt) or ($depman_config.dependencies_file | fmt)."}
+	| all-in $all_depsets.name --error {|depset| $"The specified depset ($depset | ft depset) cannot be found in ($config_toml | ft) or ($depman_config.dependencies_file | ft)."}
 	$depsets
 	| each {|depset|
 		let depset_config = (
@@ -118,15 +118,15 @@ def main [
 		| run-each {|dep|
 			if not ($dep.dir | path exists) { mkdir $dep.dir }
 		}
-		| run-if ($in | all {ls -a $in.dir | is-not-empty}) { say -i 1 $'All dependencies for depset ($depset | fmt depset) are already obtained.' }
+		| run-if ($in | all {ls -a $in.dir | is-not-empty}) { say -i 1 $'All dependencies for depset ($depset | ft depset) are already obtained.' }
 		| run-if ($in | any {ls -a $in.dir | is-empty}) {
-			say -i 1 'Obtaining dependencies for depset ' ($depset | fmt depset)
+			say -i 1 'Obtaining dependencies for depset ' ($depset | ft depset)
 		}
 		| run-each {|dep|
 			mkdir $dep.dir
 			if (ls -a $dep.dir | is-empty) {
 				[
-					(say -o -i 2 "Obtaining dependency " ($dep.name | fmt dep) '...')
+					(say -o -i 2 "Obtaining dependency " ($dep.name | ft dep) '...')
 					...($dep.cmd-str | lines | each {|line| say -o -i 3 --ansi grey58 $line })
 				]
 				| str join "\n"
@@ -135,19 +135,19 @@ def main [
 					do $dep.cmd
 					| if ($in | is-type --structured 'record<stdout: string, stderr: string, exit_code: int>' ) {
 						if $in.exit_code != 0 {
-							error $in.stderr --title $"Can't obtain the dependency ($dep.name | fmt dep)"
+							error $in.stderr --title $"Can't obtain the dependency ($dep.name | ft dep)"
 						}
 					}
 				} catch {|err|
 					$err
 					| parse-error
-					| update title {$"Can't obtain the dependency ($dep.name | fmt dep): ($in | style attr_bold)" }
+					| update title {$"Can't obtain the dependency ($dep.name | ft dep): ($in | style attr_bold)" }
 					| error $in
 				}
 			}
 		}
 		| run {|deps|
-			say -i 1 $"Running the command ($command | fmt cmd)..."
+			say -i 1 $"Running the command ($command | ft cmd)..."
 			let dependency_dirs = $deps | select name dir | transpose -rd
 			let source_dir: path = $dir | path parse | get parent | err-if ($in == null) $"You can't use the system root directory as the ($NAME) directory."
 			let out_dir: path = (
@@ -177,10 +177,10 @@ def main [
 			| complete
 			| with {|result|
 				if $result.exit_code != 0 {
-					error ($"The command aborted with exit code ($in.exit_code | style xred).\n" + (join_cmd_output $result.stdout $result.stderr)) --title $"Error running ($command | fmt cmd)"
+					error ($"The command aborted with exit code ($in.exit_code | style xred).\n" + (join_cmd_output $result.stdout $result.stderr)) --title $"Error running ($command | ft cmd)"
 				} else {
-					say -i 1 $"Successfully ran ($command | fmt cmd)."
-					if ($out_dir | path exists) and (ls $out_dir | is-not-empty) { say -i 1 $"Command artifacts are located in ($out_dir | fmt dir)." }
+					say -i 1 $"Successfully ran ($command | ft cmd)."
+					if ($out_dir | path exists) and (ls $out_dir | is-not-empty) { say -i 1 $"Command artifacts are located in ($out_dir | ft dir)." }
 					join_cmd_output $result.stdout $result.stderr
 					| if ($in | is-not-empty) { say -i 1 $"Here's the output: \n\n($in)" } 
 				}
@@ -282,12 +282,12 @@ def main [
 		}
 		| each {|it|
 			$it.value
-			| check-type record -m {|value, value_type| $"The value specified for depset ($it.name | fmt depset) in ($config_toml | fmt) is invalid: \n($value) \n\nThe value must be a record specifying the configuration for the dependency set."}
+			| check-type record -m {|value, value_type| $"The value specified for depset ($it.name | ft depset) in ($config_toml | ft) is invalid: \n($value) \n\nThe value must be a record specifying the configuration for the dependency set."}
 			| run  {
 				columns
-				| all-in  ['lock' 'lock-list' 'no-lock-list' 'deps' 'no-deps'] --error {|key, valid_keys| $"Unrecognized key ($key | fmt input) found in the configuration of the depset ($it.name | fmt depset) in ($config_toml | fmt). Valid keys are one of ($valid_keys | recount)." }
+				| all-in  ['lock' 'lock-list' 'no-lock-list' 'deps' 'no-deps'] --error {|key, valid_keys| $"Unrecognized key ($key | ft input) found in the configuration of the depset ($it.name | ft depset) in ($config_toml | ft). Valid keys are one of ($valid_keys | recount)." }
 			}
-			| err-if ((type-of $in.deps?) == 'list' and ($in.deps? | is-empty)) "The value given for key ($"depsets.($it.name).deps" | fmt key) in ($config_toml | fmt) is an empty list. A dependency set must contain at least one dependency."
+			| err-if ((type-of $in.deps?) == 'list' and ($in.deps? | is-empty)) "The value given for key ($"depsets.($it.name).deps" | ft key) in ($config_toml | ft) is an empty list. A dependency set must contain at least one dependency."
 			| defaults {
 				lock: true,
 				lock-list: [],
@@ -297,7 +297,7 @@ def main [
 			}
 			| run {|value|
 				$value.lock
-				| check-type bool -m {|value, value_type| $"The value given for key ($"depsets.($it.name).lock" | fmt key) in ($config_toml | fmt) has a type of ($value_type | fmt type): \n($value) \n\nType of the value must be ('boolean' | fmt type)."}
+				| check-type bool -m {|value, value_type| $"The value given for key ($"depsets.($it.name).lock" | ft key) in ($config_toml | ft) has a type of ($value_type | ft type): \n($value) \n\nType of the value must be ('boolean' | ft type)."}
 				[lock-list no-lock-list deps no-deps]
 				| each {|key|
 					$value
@@ -337,7 +337,7 @@ def main [
 			"
 			| complete
 			| do-if ($in.exit_code != 0) {
-				error ($"Error parsing the commands script ($depman_config.commands_script | fmt file).\n($in.stderr)") --title $"Can't parse ('commands.nu' | fmt file)"
+				error ($"Error parsing the commands script ($depman_config.commands_script | ft file).\n($in.stderr)") --title $"Can't parse ('commands.nu' | ft file)"
 			}
 			| get stdout
 			| from nuon
@@ -382,7 +382,7 @@ def main [
 		}
 		| run {
 			get name
-			| err-if-any {|name| $name in [cache retrieve obtain update]} {|cmd| {message: $"One of the commands you defined in ($depman_config.commands_script | fmt file) uses reserved name ($cmd | fmt cmd).", title: "Command uses reserved name", hint: "Rename the command."}}
+			| err-if-any {|name| $name in [cache retrieve obtain update]} {|cmd| {message: $"One of the commands you defined in ($depman_config.commands_script | ft file) uses reserved name ($cmd | ft cmd).", title: "Command uses reserved name", hint: "Rename the command."}}
 		}
 	}
 	
@@ -457,9 +457,9 @@ def main [
 				| transpose depset value
 				| update value {|source|
 					let key_loc_str: string = (
-						$' for dependency ($dep.name | fmt dep)'
+						$' for dependency ($dep.name | ft dep)'
 						| do-if ($source.depset != default) { 
-							$' in depset ($source.depset | fmt depset)' + $in
+							$' in depset ($source.depset | ft depset)' + $in
 						}
 					)
 
@@ -508,7 +508,7 @@ def main [
 								}
 								| do-if ($source_value.type in ['path' 'rsync']) {
 									try { path expand --strict } catch { 
-										error --title "Can't find path" $"The given ($source_value.type) source($key_loc_str) can't be expanded: ($source_value.description | fmt path)" --hint "Is there an item at the specified path?"
+										error --title "Can't find path" $"The given ($source_value.type) source($key_loc_str) can't be expanded: ($source_value.description | ft path)" --hint "Is there an item at the specified path?"
 									}
 								}
 							},
