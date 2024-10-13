@@ -147,7 +147,7 @@ def main [
 			}
 		}
 		| run {|deps|
-			say -i 1 $"Running the command ($command | ft cmd)..."
+			say -i 1 $"Running the command ($command | ft cmd)...\n"
 			let dependency_dirs = $deps | select name dir | transpose -rd
 			let source_dir: path = $dir | path parse | get parent | err-if ($in == null) $"You can't use the system root directory as the ($NAME) directory."
 			let out_dir: path = (
@@ -174,17 +174,17 @@ def main [
 				use '($depman_config.commands_script)';
 				commands ($command) $args.dependency-dirs $args.source-dir $args.out-dir
 			"
-			| complete
-			| with {|result|
-				if $result.exit_code != 0 {
-					error ($"The command aborted with exit code ($in.exit_code | style xred).\n" + (join_cmd_output $result.stdout $result.stderr)) --title $"Error running ($command | ft cmd)"
-				} else {
-					say -i 1 $"Successfully ran ($command | ft cmd)."
-					if ($out_dir | path exists) and (ls $out_dir | is-not-empty) { say -i 1 $"Command artifacts are located in ($out_dir | ft dir)." }
-					join_cmd_output $result.stdout $result.stderr
-					| if ($in | is-not-empty) { say -i 1 $"Here's the output: \n\n($in)" } 
-				}
-			}
+			# | complete
+			# | with {|result|
+			# 	if $result.exit_code != 0 {
+			# 		error ($"The command aborted with exit code ($in.exit_code | style xred).\n" + (join_cmd_output $result.stdout $result.stderr)) --title $"Error running ($command | ft cmd)"
+			# 	} else {
+			# 		say -i 1 $"Successfully ran ($command | ft cmd)."
+			# 		if ($out_dir | path exists) and (ls $out_dir | is-not-empty) { say -i 1 $"Command artifacts are located in ($out_dir | ft dir)." }
+			# 		join_cmd_output $result.stdout $result.stderr
+			# 		| if ($in | is-not-empty) { say -i 1 $"Here's the output: \n\n($in)" } 
+			# 	}
+			# }
 		}
 	}
 
