@@ -14,23 +14,24 @@ const default_paths = {
 	commands_script: 'commands.nu'
 }
 
-use  ../deps/nuitron *
+bundle-file nuitron 'mod.nu'
+use '../depman/cache/nuitron_ed961c8d9425e89eea2f78131b0b3577' *
 
 $env.nuitron_exit_on_error = true
-$env.nuitron_error_exit_code = 0
+$env.nuitron_error_exit_code = $env.DEPMAN_ERROR_CODE? | default 1   # TODO: Document this.
 let nu_version: string = try { (version).version } catch { 'unknown' }
 if $nu_version != $NU_VERSION {
 	error $"Your Nushell version is not compatible with ($NAME). Required Nushell version is ($NU_VERSION | style green).\nYou can download different versions of Nushell here: https://github.com/nushell/nushell/releases"
 }
 
 # Depman is the simplest possible project dependency manager, build system and command runner all in one.
-#
 # Documentation: https://github.com/rayanamal/depman
 def main [
-	command?: string     # The command from the commands script to run.
-	...depsets: string   # The dependency sets to obtain the dependencies in.
-	--dir (-d): path     # Use a different directory for depman to operate in
-	--version (-v)       # Print the version number
+	command?: string          # The command from the commands script to run.
+	...args: string           # The arguments to pass to the command.
+	--depsets: list<string>   # The dependency sets to obtain the dependencies in.
+	--dir (-d): path          # Use a different directory for depman to operate in
+	--version (-v)            # Print the version number
 ]: nothing -> nothing { ignore
 	if $version {
 		say $"($NAME) version: ($VERSION | style green)"
@@ -41,10 +42,7 @@ def main [
 		say $"Run ($CLI_NAME + ' init' | ft cmd) to get started, or ($CLI_NAME + ' --help' | ft cmd) to see the command description."
 		exit
 	}
-	let depsets: list<string> = (
-		$depsets
-		| do-if ($in | is-empty) { ['default'] }
-	)
+	let depsets: list<string> = $depsets | do-if ($in | is-empty) { ['default'] }
 	let dir: path = (
 		$dir 
 		| default (find-dir $DEPMAN_DIR)
@@ -72,7 +70,6 @@ def main [
 			open-toml $config_toml
 		} else { {} }
 	)
-	
 	let depman_config = parse_depman_config $config $config_defaults
 	$depman_config
 	| select out-dir cache-dir
@@ -84,7 +81,7 @@ def main [
 	let dep_locks: any = parse_lockfile
 	let all_commands: table<name: string, fresh-start: bool, out-dir: path> = parse_commands $config
 	let command: string = $command | default $depman_config.default-command
-	err-if ($command not-in $all_commands.name) $"The given command ($command | ft cmd) cannot be found in ($depman_config.commands_script | ft)."
+	err-if ($command not-in $all_commands.name) $"The given command ($command | ft command) cannot be found in ($depman_config.commands_script | ft)."
 	let dependencies = parse_dependencies
 	let all_depsets = parse_depsets $config $dependencies
 	$depsets
@@ -110,7 +107,15 @@ def main [
 			)
 			
 			{name: $dep_name}
-			| insert src-hash ($source | to nuon | hash md5)
+			| insert src-hash {|rec|
+				let prefix = $rec.name | str substring ..30 | $in + '_'
+				$source
+				| to nuon 
+				| hash md5 
+				| str substring ..(255 - ($prefix | str length))
+				| $prefix + $in
+				| path sanitize
+			}
 			| insert dir {|rec| [$depman_config.cache-dir $rec.src-hash] | path join}
 			| insert lock (determine_lock $depset_config $dep_name)
 			| merge (compute_cmd $in.dir $source)
@@ -147,7 +152,7 @@ def main [
 			}
 		}
 		| run {|deps|
-			say -i 1 $"Running the command ($command | ft cmd)...\n"
+			say -i 1 $"Running the command ($command | ft command)...\n"
 			let dependency_dirs = $deps | select name dir | transpose -rd
 			let source_dir: path = $dir | path parse | get parent | err-if ($in == null) $"You can't use the system root directory as the ($NAME) directory."
 			let out_dir: path = (
@@ -161,30 +166,73 @@ def main [
 					)
 				)
 			)
-			
 			if ($all_commands | where name == $command).0.fresh-start {
 				rm -rf $out_dir
 				mkdir $out_dir
 			}
-			{dependency-dirs: $dependency_dirs, source-dir: $source_dir, out-dir: $out_dir}
-			| to nuon
-			| nu --stdin -c $"
-				let args = $in | from nuon
-				cd '($out_dir)'
-				use '($depman_config.commands_script)';
-				commands ($command) $args.dependency-dirs $args.source-dir $args.out-dir
+			let nuitron_dir = ([$depman_config.cache-dir nuitron] | path join)
+			mkdir $nuitron_dir
+			bundle-file --base64 nuitron mod.nu 
+			| decode new-base64
+			| save -f ($nuitron_dir | path join 'mod.nu')
+
+			let script = $"
+				let inputs = $in | from nuon
+				let args = $in.args
+				let dirs = $in.dirs
+				let dirs = () | from nuon
+				cd ($out_dir | to nuon)
+				use '($nuitron_dir)' *
+				use ($depman_config.commands_script | to nuon)
+				try {
+					if ($args | is-not-empty) {
+						commands ($command) $dirs $args
+					} else {
+						commands ($command) $dirs
+					}
+				} catch {|err|
+					$err
+					| parse-error
+					| { depman_error_message: $in.message }
+					| to json --raw
+					| print $in
+					exit \($err.exit_code? | default 1\)
+				}
 			"
-			# | complete
-			# | with {|result|
-			# 	if $result.exit_code != 0 {
-			# 		error ($"The command aborted with exit code ($in.exit_code | style xred).\n" + (join_cmd_output $result.stdout $result.stderr)) --title $"Error running ($command | ft cmd)"
-			# 	} else {
-			# 		say -i 1 $"Successfully ran ($command | ft cmd)."
-			# 		if ($out_dir | path exists) and (ls $out_dir | is-not-empty) { say -i 1 $"Command artifacts are located in ($out_dir | ft dir)." }
-			# 		join_cmd_output $result.stdout $result.stderr
-			# 		| if ($in | is-not-empty) { say -i 1 $"Here's the output: \n\n($in)" } 
-			# 	}
-			# }
+			{ 
+				dirs: { dependency-dirs: $dependency_dirs, source-dir: $source_dir, out-dir: $out_dir },
+				args: ...$args
+			}
+			| to nuon
+			| nu --stdin -c $script
+			| tee {print}
+			| tee -e {print}
+			| complete
+			| prt
+			| if $in.exit_code != 0 {
+				let result = $in
+				try { 
+					$result.stdout
+					| prt
+					| lines
+					| last
+					| from json
+					| get depman_error_message
+					| with {|message|
+						say "\e[F\e[2K\e[F\e[2K"
+						$message
+					}
+				} catch {
+					$result.stderr
+				}
+				| error $in --title $"Error running ($command | ft command)"
+			} else {
+				say ''
+				say -i 1 $"Successfully ran ($command | ft command)."
+				if ($out_dir | path exists) and (ls $out_dir | is-not-empty) { 
+					say -i 1 $"Command artifacts are located in ($out_dir | ft dir)." 
+				}
+			}
 		}
 	}
 
@@ -242,13 +290,10 @@ def main [
 			},
 			{path: $path} => {
 				let path: path = $path | path expand --strict
-				if $path ends-with (char path_sep) {{ 
+				{ 
 					cmd: {cp -r ($path) ($cache_dir)},
 					cmd-str: $"cp -r ($path) '($cache_dir)'"
-				}} else {{
-					cmd: {cp ($path) ($cache_dir)} 
-					cmd-str: $"cp ($in) ($path) '($cache_dir)'"	 
-				}}
+				}
 			},
 			{rsync: $source} => {
 				let source = $source | path expand --strict | str trim -r -c '/'
@@ -302,7 +347,7 @@ def main [
 				| each {|key|
 					$value
 					| get ([$key] | into cell-path)
-					| check-type --structured 'list<string>' -m {|value, value_type, accepted_types| $"The value given for key "depsets.($it.name).($key)" in \"($config_toml)\" has a type of \"($value_type)\": \n($value) \n\nType of the value must be ($accepted_types)."}	
+					| check-type --structured 'list<string>' -m {|value, value_type, accepted_types| $"The value given for key ($'depsets.($it.name).($key)' | ft key) in ($config_toml | ft) has a type of ($value_type | ft type): \n($value) \n\nType of the value must be ($accepted_types)."}	
 				}
 				$value 
 				| select lock-list no-lock-list
@@ -343,13 +388,12 @@ def main [
 			| from nuon
 		}
 		let defined_commands = parse_commands_script
-
 		$config.commands?
 		| default {}
 		| transpose name value
 		| run {|commands|
 			$commands.name
-			| all-in $defined_commands --error {|cmd| $"The command \"($cmd)\" found in \"($config_toml)\" has no definition in \"($depman_config.commands_script)\"." }
+			| all-in $defined_commands --error {|cmd| $"The command ($cmd | ft input) found in ($config_toml | ft) has no definition in ($depman_config.commands_script | ft)." }
 		}
 		| with {|commands|
 			$defined_commands
@@ -360,11 +404,21 @@ def main [
 			| transpose name value
 		}
 		| each {|it|
+			err-if ($it.name in [cache retrieve obtain update] ) {
+				title: "Command uses reserved name"
+				message: $"One of the commands you defined in ($depman_config.commands_script | ft file) uses reserved name ($it.name | ft cmd)."
+				hint: "Rename the command."
+			}
+			err-if ($it.name | parse -r '([^\w-])' | is-not-empty ) {
+				title: $"Invalid command name"
+				message: $"The command found in ($depman_config.commands_script | ft) contains invalid characters in its name: ($it.name | ft input)"
+				hint: 'The command name can only contain word characters (\w) and dashes.'
+			}
 			$it.value
-			| check-type record -m {|value, value_type| $"Invalid value for key "commands.($it.name)" in \"($config_toml)\". Type of the value must be record. Found value of type \"($value_type)\":\n($value)" }
+			| check-type record -m {|value, value_type| $"Invalid value for key "commands.($it.name)" in ($config_toml | ft). Type of the value must be record. Found value of type ($value_type | ft type):\n($value)" }
 			| run {
 				columns
-				| all-in  ['fresh-start' 'out-dir' ] --error {|key, valid_keys| $"Unrecognized key \"($key)\" under [commands] in file \"($config_toml).\". Valid keys are ($valid_keys | recount --and)." }
+				| all-in  ['fresh-start' 'out-dir' ] --error {|key, valid_keys| $"Unrecognized key ($key | ft input) under [commands] in file ($config_toml | ft). Valid keys are ($valid_keys | recount --and)." } 
 			}
 			| defaults {
 				fresh-start: true,
@@ -372,17 +426,13 @@ def main [
 			}
 			| run {|value|
 				$value.fresh-start
-				| check-type bool -m {|value, value_type| $"The value given for key \"commands.($it.name).fresh-start\" in \"($config_toml)\" has a type of \"($value_type)\": \n($value) \n\nType of the value must be boolean."}
+				| check-type bool -m {|value, value_type| $"The value given for key ($'commands.($it.name).fresh-start' | ft key) in ($config_toml | ft) has a type of ($value_type | ft type): \n($value) \n\nType of the value must be boolean."}
 				$value.out-dir
-				| do-if ($in != null) {
-					check-type string -m {|value, value_type| $"The value given for key \"commands.($it.name).out-dir\" in \"($config_toml)\" has a type of \"($value_type)\": \n($value) \n\nType of the value must be string."}
+				| do-if ($in != null) {0
+					check-type string -m {|value, value_type| $"The value given for key ($'commands.($it.name).out-dir' | ft key) in ($config_toml | ft) has a type of ($value_type | ft type): ($value) \n\nType of the value must be ('string' | ft type)."}
 				}
 			}
 			| {name: $it.name, ...$in}
-		}
-		| run {
-			get name
-			| err-if-any {|name| $name in [cache retrieve obtain update]} {|cmd| {message: $"One of the commands you defined in ($depman_config.commands_script | ft file) uses reserved name ($cmd | ft cmd).", title: "Command uses reserved name", hint: "Rename the command."}}
 		}
 	}
 	
@@ -411,7 +461,7 @@ def main [
 		| check-type 'record' -m {$'Invalid value for key "depman" in "($config_toml)". Type of the value must be record.'}
 		| run {
 			columns
-			| all-in ['out-dir', 'cache-dir', 'default-command'] --error {|key, valid_keys| $"Unrecognized key \"($key)\" under [depman] in file \"($config_toml).\". Valid keys are one of ($valid_keys | recount)." }
+			| all-in ['out-dir', 'cache-dir', 'default-command'] --error {|key, valid_keys| $"Unrecognized key ($key | ft input) under ('[depman]' | ft key) in file ($config_toml | ft). Valid keys are one of ($valid_keys | recount)." }
 		}
 		| defaults $config_defaults
 	}
@@ -466,7 +516,7 @@ def main [
 					$source.value
 					| filter-one $'There are multiple sources($key_loc_str).' (unexpected-error "parse_dependencies: No sources for $source.value.")
 					| check-type 'record' --err-msg {|value, value_type|
-						$"The value specified for depset \"($source.depset)\" for dependency \"($dep.name)\" is invalid: \n($value) \n\nA dependency set must be a record with keys specifying a source for the dependency."}
+						$"The value specified for depset (($source.depset) | ft depset) for dependency ($dep.name | ft dep) is invalid: \n($value) \n\nA dependency set must be a record with keys specifying a source for the dependency."}
 					| reject -i depman-cmd
 					| transpose type description -d
 					| insert depman-cmd $source.value.depman-cmd?
@@ -479,7 +529,7 @@ def main [
 									if $value_type == 'nothing' {
 										$'You specified a git repository source($key_loc_str) but did not specify a remote url.'
 									} else {
-										$"The given url value for the git repository source($key_loc_str) has a type of \"($value_type)\": \n($value) \n\nType of the value must be string."
+										$"The given url value for the git repository source($key_loc_str) has a type of ($value_type | ft type): \n($value) \n\nType of the value must be string."
 									}
 								}
 								[ $repo.commit? $repo.branch? ]
@@ -492,19 +542,19 @@ def main [
 									if $value_type == 'nothing' {
 										$'You specified a http source($key_loc_str) but did not specify the url.'
 									} else {
-										$"The given url value for the http source($key_loc_str) has a type of \"($value_type)\": \n($value) \n\nType of the value must be string."
+										$"The given url value for the http source($key_loc_str) has a type of ($value_type | ft type): \n($value) \n\nType of the value must be string."
 									}
 								}
 								$http.redirect-mode?
 								| do-if ($in != null) {
-									check-type 'string' --err-msg {|value, value_type| $"The given redirect-mode value for the http source($key_loc_str) has a type of \"($value_type)\": \n($value) \n\nType of the value must be string."}
-									| err-if ($in not-in ['follow' 'error']) $"The given redirect-mode value for the http source($key_loc_str) is invalid: \n($http.redirect-mode?) \n\nThe value must be either \"follow\" or \"error\"."
+									check-type 'string' --err-msg {|value, value_type| $"The given redirect-mode value for the http source($key_loc_str) has a type of ($value_type | ft type): \n($value) \n\nType of the value must be string."}
+									| err-if ($in not-in ['follow' 'error']) $"The given redirect-mode value for the http source($key_loc_str) is invalid: \n($http.redirect-mode?) \n\nThe value must be either ('follow' | style attr_bold) or ('error' | style attr_bold)."
 								}
 							},
 							'path'|'rsync'|'cmd'|'depman-cmd' => {
 								$source_value.description
 								| check-type 'string' --err-msg {|value, value_type|
-									$"The given value for the ($source_value.type) source($key_loc_str) has a type of \"($value_type)\": \n($value) \n\nType of the value must be string."
+									$"The given value for the ($source_value.type) source($key_loc_str) has a type of ($value_type | ft type): \n($value) \n\nType of the value must be string."
 								}
 								| do-if ($source_value.type in ['path' 'rsync']) {
 									try { path expand --strict } catch { 
@@ -520,6 +570,7 @@ def main [
 		}
 	}
 
+	# Create an unexpected error message.
 	def unexpected-error [situation: string]: nothing -> record<message: string, title: string> { ignore
 		{ source: $NAME, title: "An unexpected error occurred.", message: $"We're sorry about this. In order for this issue to be fixed as soon as possible, please report it at ($"($GITHUB_URL)/issues" | ansi link | style blue) with the following information: \nCause of error: ($situation) \n($NAME) version: ($VERSION)"}
 	}
@@ -531,7 +582,7 @@ def 'main init' [
 ]: nothing -> nothing { ignore
 	let project_dir: path = $project_dir | default '.'
 	let depman_dir = [$project_dir $DEPMAN_DIR] | path join
-	err-if ($depman_dir | path exists) $"The directory \"($depman_dir)\" already exists. If you want to re-initialize ($NAME), remove it before running \"($CLI_NAME) init\"."
+	err-if ($depman_dir | path exists) $"The directory ($depman_dir | ft) already exists. If you want to re-initialize ($NAME), remove the directory before running ($'($CLI_NAME) init' | ft cmd)."
 	mkdir $depman_dir
 	let gitignore = [$project_dir '.gitignore'] | path join
 	if ($gitignore | path exists) {
@@ -540,7 +591,7 @@ def 'main init' [
 		| save -f $gitignore
 	}
 	if (ls $depman_dir | is-empty) {
-'export def build [dependency_dirs, source_dir, out_dir] {
+'export def build [dirs] {
 	# Write your build script here.
 
 }

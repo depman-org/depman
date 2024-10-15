@@ -162,24 +162,24 @@ This is the file where you define [commands](https://www.nushell.sh/book/custom_
 Here's an example file defining an `install` command to build and install [Pragtical](https://github.com/pragtical/pragtical?tab=readme-ov-file#quick-build-guide):
 
 ```nu
-export def install [dependency_dirs, source_dir, out_dir] {
-	cd $dependency_dirs.pragtical
+export def install [$dirs] {
+	cd $dirs.dependencies.pragtical
 	meson setup --wrap-mode=forcefallback -Dportable=true build
 	meson compile -C build
-	meson install -C build --destdir $out_dir
+	meson install -C build --destdir $dirs.out
 }
 ```
 
 All environment variables are cleared before a command from `commands.nu` is executed, except `$env.HOME`, `$env.DISPLAY`, `$env.USER` and `$env.PATH`. (You might notice this is the same behavior as `nix-shell`). This is to reduce dependence on the environment and to encourage explicit acquiring of all dependencies.
 
-Your command is executed with three arguments:
-```depman install <dependency_dirs_dirs> <source_dir> <out_dir>```
+Your command is executed with two arguments:
+```depman install <dirs> <args?>```
 
-- `$dependency_dirs`: The record containing dependency name - directory pairs.
-- `$source_dir`: The source directory (the parent directory of `depman/`)
-- `$out_dir`: The directory for the command to put artifacts in.
-
-Working directory is set to `$out_dir`.
+- `$dirs.dependencies`: The record containing dependency name - directory pairs.
+- `$dirs.source`: The source directory (the parent directory of `depman/`)
+- `$dirs.out`: The directory for the command to put artifacts in.
+- `$args?`: The arguments passed to the command by the user.
+Working directory is set to `$dirs.out`.
 
 ## Usage									
 
