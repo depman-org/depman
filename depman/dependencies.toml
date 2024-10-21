@@ -1,8 +1,7 @@
 [nuitron]
 git.url = "https://github.com/rayanamal/nuitron.git"
-git.commit = "ca7ec24a"
-dev.path = '~/nuitron/mod.nu'
+git.commit = "1759591"
 
-[depman-v001]
-git.url = "https://github.com/depman-org/depman.git"
-git.commit = "dcc0bae0"
+# [depman-v002]
+# git.url = "https://github.com/depman-org/depman.git"
+# git.commit = "dcc0bae0"

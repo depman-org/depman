@@ -1,5 +1,5 @@
 ### Caution!
-This project is in alpha stage, which means many of the features described here are not implemented yet. That said, Depman is self-hosted today and uses itself for its own development, build and testing, all under 600 lines of code.
+This project is in alpha stage, which means most of the features described here are not implemented yet. That said, Depman is self-hosted today and uses itself for its own development, build and testing, all under 600 lines of code.
 
 ## What is Depman?
 
@@ -9,13 +9,13 @@ Depman is the simplest possible:
 - Command/test runner
 - CI/CD system
 
-It can replace (or build upon) tools as diverse as Make, Meson, Nix, Travis, GH Actions, Just, Bazel or Dagger.
+It can replace or build upon tools as diverse as Make, Meson, Nix, Travis, GH Actions, Just, Bazel, Dagger, and more.
 
 ## Features
 - **General purpose**: No assumptions about language, project type, ecosystem, or tooling.
 - **Flexible**: You 'just write a (nu)shell script'. There is no DSL or programming language to learn.
 - **Single script**: Did you ever want to distribute your build system with your project? No? Now you can do it!
-- **Interoperable**: Everything Depman does happens in a single self contained 'depman/' directory anywhere in your project.
+- **Self-contained**: Everything Depman does happens in a single self contained 'depman/' directory anywhere in your project.
 - **Secure**: Builds are fully isolated from your system with [Syd](https://crates.io/crates/syd) and containers.
 - **Reproducible (Repeatable)**: Inputs *and* outputs are pinned with their content hashes.
 - **Fast**: Incremental caching.
@@ -23,7 +23,7 @@ It can replace (or build upon) tools as diverse as Make, Meson, Nix, Travis, GH 
 - **Backwards & forwards compatible**: Any version of Depman can build a project using any version of Depman.
 - **Modern**: Written in Nushell, a statically typed, functionally oriented cross-platform shell and programming language written in Rust.
 
-### Values 
+### Design principles
 Ordered by priority:
 
 1. **Security**: Depman will stop and warn you if any your dependencies have changed a literal bit. It will never auto-update any input.
@@ -178,57 +178,43 @@ Your command is executed with two arguments:
 - `$dirs.dependencies`: The record containing dependency name - directory pairs.
 - `$dirs.source`: The source directory (the parent directory of `depman/`)
 - `$dirs.out`: The directory for the command to put artifacts in.
-- `$args?`: The arguments passed to the command by the user.
+- `$args?`: The arguments passed to the command by the user, if any.
 Working directory is set to `$dirs.out`.
 
-## Usage									
+## Usage
 
 ```
-depman {flags} <command> ...(depsets)
+> depman {flags} (command) ...(args)
+
+Subcommands:
+depman init       - Initiate Depman in your project.
+depman cache      - Cache an item with a key.
+depman retrieve   - Retrieve an item from the cache with a key.
+
+Flags:
+-s, --depsets <list<string>>   - The dependency sets to obtain their dependencies.
+-d, --dir <path>               - Use a different directory for depman to operate in.
+-q, --quiet                    - Be quiet unless there is an error. Commands asking for user confirmation will exit with an error.
+-n, --no-error-msg             - Don't show error messages (useful for debugging depman)
+-v, --version                  - Print the version number
+-h, --help                     - Display the help message for this command
+-o, --overlay <path, record>   - Overlay either the given dependencies file or the record on top of the current dependencies.toml.
+-w, --watch                    - Watch the source directory and re-execute the command whenever any file changes.
+
+Parameters:
+command <string>: The command from the commands script to run. (optional)
+...args <string>: The arguments to pass to the command.
+
 ```
-
-#### Execution:
-1. Find the closest `depman/` directory, searching upwards from the current directory.
-2. Create a rootless container and mount the source directory (parent directory of `depman/`) into the container. The rest of the process from here runs entirely inside a container, to provide a standardized environment for Depman to operate in across platforms.
-3. Acquire dependencies specified in `dependencies.toml`. If a dependency set (depset) is given obtain only the dependencies in the specified depset.
-4. Execute the `<command>` you defined in `commands.nu` with the obtained dependencies' locations given as argument. The command is whitelist-sandboxed to be able to only access the directories it should with [Syd](https://crates.io/crates/syd).
-5. That's it!
-
-### Flags
-
--	`--watch`
-	
-	Watch the source directory (the parent directory of `depman/`) and re-execute the command whenever any file inside changes. 
-
--	`--dir <path_to_dir>`
-	
-	Use the specified directory as the `depman/` directory instead of the automatically discovered one.
-
--	`--overlay <path_to_dependencies_toml | record>`
-	
-	Merge either the given `dependencies.toml` file or the record with the current `dependencies.toml`. The values in the given file/record will overwrite the fields in the current `dependencies.toml`.
-
--	`--help`
-	
-	Show the help text.
-
-### Subcommands
--	`depman cache <item> <name>`
-	
-	Cache the given directory or file with the given name. You can use this command to manually cache items which are compute heavy to generate in `commands.nu`.
-
--	`depman retrieve <name> <dir>`
-	
-	Retrieve a directory cached with `depman cache` with its name to the specified directory.
-
--	`depman init`: Create an example `depman/` directory in the current directory.
 
 ## Installation
 
-1. Install [Nushell](https://www.nushell.sh/book/installation.html). This dependency will be removed before v1 as we implement containerization.
-2. Download the [latest release](https://github.com/depman-org/depman/releases/latest) and extract it anywhere you want (e.g. `~/.local/bin/`).
+1. Install [Nushell](https://www.nushell.sh/book/installation.html)[^1]. 
+2. Download the [latest release](https://github.com/depman-org/depman/releases/latest) of Depman and extract it anywhere you want (e.g. `~/.local/bin/`).
 
-If you use `git` or `rsync` to obtain your dependencies, they need to present on your system as well. This dependency will also be removed before v1.
+If you use `git` or `rsync` to obtain your dependencies, they need to be present on your system as well[^1].
+
+[^1]: This dependency will be removed before v1.
 
 ## Building & development
 
@@ -237,19 +223,36 @@ If you use `git` or `rsync` to obtain your dependencies, they need to present on
 ```
 git clone https://github.com/depman-org/depman.git
 ```
-3. Inside the repo, run `depman prepare-dev` to prepare the development environment.
+3. Inside the repo, run `depman prep` to prepare the development environment.
 
-In order to build the script (bundle it with its dependencies into a single file) run `depman build`.
+### Commands to build, test and debug
+
+- `depman build`: Build depman (with your system depman)
+- `depman build-run ...`: Build depman and run the freshly built depman with given arguments
+- `depman test`: Build depman, test that it can build the previous version of depman successfully and that the build result works
+- To test error handling:
+  - `depman shell-error`: Create a shell error
+  - `depman stream-error`: Create a streaming command error
+  - `depman rsync-error`: Create a rsync error
 
 ## FAQ
 
+### What happens when I run `depman my-command`?
+Here's what happens in order:
+
+1. Find the closest `depman/` directory, searching upwards from the current directory.
+2. Create a rootless container and mount the source directory (parent directory of `depman/`) into the container. The rest of the process from here runs entirely inside a container, to provide a standardized environment for Depman to operate in across platforms.
+3. Obtain the dependencies specified in the `dependencies.toml` file. If you gave a dependency set (depset) with the `--depsets` flag, obtain only the dependencies in the specified depset.
+4. Execute the command named `my-command` you defined in `commands.nu` with the appropriate [arguments](#commandsnu). The command is sandboxed with [Syd](https://crates.io/crates/syd) and can't access anything it doesn't need.
+5. That's it!
+
 ### Why did you create this?
-I was building a complex project for a client which started small but soon required a build system. There were many moving parts, C sources to compile, binaries to bundle, static assets to include. Reliability and reproducibility was a requirement. I evaluated the current mainstream build tools: Bazel, Nix, Make, Dagger, Meson, etc. All of them are either too complex, too inconvenient or too inflexible for the job. So I decided to build a 5 minute learning curve, fully general purpose, zero bloat minimal build tool.
+I was building a complex project for a client which started small but soon required a build system. There were many moving parts, C sources to compile, binaries to bundle, static assets to include. Reliability and reproducibility was a requirement. I evaluated the current mainstream build tools: Bazel, Nix, Make, Dagger, Meson, etc. All of them are either too big/complex, too inconvenient or too inflexible for the job. So I decided to build a 5 minute learning curve, fully general purpose, zero bloat minimal build tool.
 
 ### Why is using a bash based build script not supported?
 Please take a look at your calendar.
 
-To be serious, bash can't provide some of the necessary functionality like modules and structured data flow, which enable Depman to be so convenient with its low LoC count and complexity.
+To be serious, bash can't provide some of the necessary functionality like modules, structured data flow and built-in coreutils, critical features which enable Depman to be so convenient with its low LoC count and complexity.
 
 ### What about Nix?
 
@@ -261,7 +264,7 @@ Nix is the closest tool in spirit to Depman. Here are the tradeoffs:
 | Build language                  | Nu                                | Nix & Bash                                                    |
 | Build sandbox technology        | Bubblewrap                        | [Syd](https://crates.io/crates/syd)                           |
 | External build programs         | Directly used, e.g `cargo`        | Used by Nix functions calling them, e.g `pkgs.buildRustCrate` |
-| Onboarding/learning time        | 5 minutes                         | 1-2 weeks                                                     |
+| Onboarding/learning time        | 10 minutes                        | 1-2 weeks                                                     |
 | Fully general purpose           | Yes                               | Yes                                                           |
 
 ## Contributing

@@ -15,7 +15,7 @@ const default_paths = {
 }
 
 bundle-file nuitron 'mod.nu'
-use '../depman/cache/nuitron_ed961c8d9425e89eea2f78131b0b3577' *
+use ../depman/cache/nuitron *
 
 $env.nuitron_exit_on_error = true
 $env.nuitron_error_exit_code = $env.DEPMAN_ERROR_CODE? | default 1   # TODO: Document this.
@@ -24,14 +24,16 @@ if $nu_version != $NU_VERSION {
 	error $"Your Nushell version is not compatible with ($NAME). Required Nushell version is ($NU_VERSION | style green).\nYou can download different versions of Nushell here: https://github.com/nushell/nushell/releases"
 }
 
-# Depman is the simplest possible project dependency manager, build system and command runner all in one.
+# Depman is the simplest possible project dependency manager, build system and command runner.
 # Documentation: https://github.com/rayanamal/depman
 def main [
-	command?: string          # The command from the commands script to run.
-	...args: string           # The arguments to pass to the command.
-	--depsets: list<string>   # The dependency sets to obtain the dependencies in.
-	--dir (-d): path          # Use a different directory for depman to operate in
-	--version (-v)            # Print the version number
+	command?: string               # The command from the commands script to run.
+	...args: string                # The arguments to pass to the command.
+	--depsets (-s): list<string>   # The dependency sets to obtain the dependencies in.
+	--dir (-d): path               # Use a different directory for depman to operate in
+	--quiet (-q)                   # Be quiet unless there is an error. Commands asking for user confirmation will exit with an error.
+	--no-error-msg (-n)            # Don't show error messages (useful for debugging depman)
+	--version (-v)                 # Print the version number
 ]: nothing -> nothing { ignore
 	if $version {
 		say $"($NAME) version: ($VERSION | style green)"
@@ -42,6 +44,7 @@ def main [
 		say $"Run ($CLI_NAME + ' init' | ft cmd) to get started, or ($CLI_NAME + ' --help' | ft cmd) to see the command description."
 		exit
 	}
+	$env.nuitron_shut_up = $quiet
 	let depsets: list<string> = $depsets | do-if ($in | is-empty) { ['default'] }
 	let dir: path = (
 		$dir 
@@ -49,12 +52,16 @@ def main [
 		| default ([. $DEPMAN_DIR] | path join)
 	)
 	if not ($dir | path exists) {
-		print $"No ($dir | path basename | ft dir) directory found. Do you want to create one at path ($dir | ft dir)? \(Y/n\)"
-		[Yes No] | input list -f
-		| if $in == 'Yes' {
-			main init
+		if not $quiet {
+			say $"No ($dir | path basename | ft dir) directory found. Do you want to create one at path ($dir | ft dir)? \(Y/n\)"
+			[Yes No] | input list -f
+			| if $in == 'Yes' {
+				main init
+			}
+			exit
+		} else {
+			exit 1
 		}
-		exit
 	}
 	let config_defaults: record = (
 		$default_paths
@@ -76,7 +83,7 @@ def main [
 	| items {|_, path| ensure-dir $path}
 
 	if not ($depman_config.commands_script | path exists) {
-		error --title 'No commands file' $"Can't find a ($depman_config.commands_script | path basename | ft file) file in ($dir | ft dir)." --hint $"Run ($'($CLI_NAME) init' | ft cmd) to create a starting template."
+		error --title 'No commands file' $"Can't find a ($depman_config.commands_script | path basename | ft file) file in ($dir | ft dir)." --hint $"Run '($'($CLI_NAME) init')' to create a starting template."
 	}
 	let dep_locks: any = parse_lockfile
 	let all_commands: table<name: string, fresh-start: bool, out-dir: path> = parse_commands $config
@@ -170,67 +177,72 @@ def main [
 				rm -rf $out_dir
 				mkdir $out_dir
 			}
-			let nuitron_dir = ([$depman_config.cache-dir nuitron] | path join)
-			mkdir $nuitron_dir
-			bundle-file --base64 nuitron mod.nu 
-			| decode new-base64
-			| save -f ($nuitron_dir | path join 'mod.nu')
 
+			let nuitron_path = ([$depman_config.cache-dir nuitron.nu] | path join)
+			bundle-file --base64 nuitron mod.nu
+			| decode new-base64
+			| save -f $nuitron_path
+			# TODO: there's a sql injection attack in how you use nuitron_path and commands_script down there. Preventable by not allowing any '# sequence in these paths.
+			# TODO: remove the cache dir from below when the depman cache and depman retrieve commands are implemented. Change commands.nu accordingly too.
 			let script = $"
-				let inputs = $in | from nuon
-				let args = $in.args
-				let dirs = $in.dirs
-				let dirs = () | from nuon
-				cd ($out_dir | to nuon)
-				use '($nuitron_dir)' *
-				use ($depman_config.commands_script | to nuon)
-				try {
+				let input = $in | from nuon
+				load-env $input.env
+				let dirs = $input.dirs
+				let args = $input.args
+				use r#'($nuitron_path)'# *
+				use r#'($depman_config.commands_script)'#
+				cd $dirs.out
+				try {(
 					if ($args | is-not-empty) {
-						commands ($command) $dirs $args
+						$'commands ($command) $dirs $args'
 					} else {
-						commands ($command) $dirs
+						$'commands ($command) $dirs'
 					}
-				} catch {|err|
+				)} catch {|err|
 					$err
 					| parse-error
-					| { depman_error_message: $in.message }
 					| to json --raw
 					| print $in
 					exit \($err.exit_code? | default 1\)
 				}
 			"
+			
 			{ 
-				dirs: { dependency-dirs: $dependency_dirs, source-dir: $source_dir, out-dir: $out_dir },
-				args: ...$args
+				dirs: {dependencies: $dependency_dirs, source: $source_dir, out: $out_dir, cache: $depman_config.cache-dir} 
+				args: $args
+				env: {nuitron_exit_on_error: $env.nuitron_exit_on_error, nuitron_error_exit_code: $env.nuitron_error_exit_code}
 			}
 			| to nuon
 			| nu --stdin -c $script
 			| tee {print}
 			| tee -e {print}
 			| complete
-			| prt
-			| if $in.exit_code != 0 {
-				let result = $in
-				try { 
-					$result.stdout
-					| prt
-					| lines
-					| last
-					| from json
-					| get depman_error_message
-					| with {|message|
-						say "\e[F\e[2K\e[F\e[2K"
-						$message
+			| with {|result|
+				if $result.exit_code? != 0 {
+					try {
+						$result.stdout
+						| lines
+						| last
+						| from json
+						| with {|error_rec|
+							print "\e[F\e[2K\e[F\e[2K"
+							$error_rec
+						}
+					} catch {|err|
+						{ message: $result.stderr }
 					}
-				} catch {
-					$result.stderr
-				}
-				| error $in --title $"Error running ($command | ft command)"
-			} else {
-				say ''
-				say -i 1 $"Successfully ran ($command | ft command)."
-				if ($out_dir | path exists) and (ls $out_dir | is-not-empty) { 
-					say -i 1 $"Command artifacts are located in ($out_dir | ft dir)." 
+					| upsert title {
+						if $in != null { ': ' + $in } else { '' }
+						| $"Error running ($command | ft command)" + $in
+					}
+					| if not $no_error_msg { 
+						error $in
+					} else { exit 1 }
+				} else {
+					say -i 1 $"Successfully ran ($command | ft command)."
+					if ($out_dir | path exists) and (ls $out_dir | is-not-empty) {
+						say -i 1 $"Command artifacts are located in ($out_dir | ft dir)."
+					}
 				}
 			}
 		}
@@ -313,7 +325,7 @@ def main [
 		$config.depsets?
 		| default {}
 		| transpose name value
-		| with {|depsets|
+		| do-if ($dependencies != null) {|depsets|
 			$dependencies
 			| get sources
 			| flatten
@@ -557,7 +569,7 @@ def main [
 									$"The given value for the ($source_value.type) source($key_loc_str) has a type of ($value_type | ft type): \n($value) \n\nType of the value must be string."
 								}
 								| do-if ($source_value.type in ['path' 'rsync']) {
-									try { path expand --strict } catch { 
+									try { path expand --strict | ignore } catch { 
 										error --title "Can't find path" $"The given ($source_value.type) source($key_loc_str) can't be expanded: ($source_value.description | ft path)" --hint "Is there an item at the specified path?"
 									}
 								}
