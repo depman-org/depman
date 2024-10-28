@@ -609,6 +609,5 @@ def 'main init' [
 }
 '
 		| save -f ([$depman_dir 'commands.nu'] | path join)
-		
 	}
 }

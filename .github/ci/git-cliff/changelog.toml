@@ -8,7 +8,7 @@
 [bump]
 features_always_bump_minor = true
 breaking_always_bump_major = true
-initial_tag = "0.1.0-beta"
+initial_tag = "0.1.0"
 
 [changelog]
 # template for the changelog header
@@ -33,28 +33,23 @@ body = """
 {% endmacro -%}
 
 {% if version %}\
-    {% if previous.version %}\
-        ## [{{ version | trim_start_matches(pat="v") }}]\
-          ({{ self::remote_url() }}/compare/{{ previous.version }}..{{ version }}) - {{ timestamp | date(format="%Y-%m-%d") }}
-    {% else %}\
-        ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
-    {% endif %}\
+    ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}\n
 {% else %}\
-    ## [unreleased]
-{% endif %}\
+    ## [unreleased]\n
+{% endif %}
 
 {%- for group, commits in commits | group_by(attribute="group") -%}
     ### {{ group | striptags | trim | upper_first }}
-    {% for commit in commits
+    {%- for commit in commits
     | filter(attribute="scope")
-    | sort(attribute="scope") %}
+    | sort(attribute="scope") -%}
         {{ self::print_commit(commit=commit) }}
-    {%- endfor -%}
-    {%- for commit in commits -%}
+    {% endfor %}
+    {% for commit in commits %}
         {%- if not commit.scope -%}
             {{ self::print_commit(commit=commit) }}
-        {%- endif -%}
-    {%- endfor -%}
+        {% endif %}
+    {% endfor %}
 {%- endfor -%}
 """
 
@@ -66,6 +61,10 @@ footer = """
             [{{ release.version | trim_start_matches(pat="v") }}]: \
                 https://github.com/{{ remote.github.owner }}/{{ remote.github.repo }}\
                     /compare/{{ release.previous.version }}..{{ release.version }}
+        {% else %}
+            [{{ release.version | trim_start_matches(pat="v") }}]: \
+                https://github.com/{{ remote.github.owner }}/{{ remote.github.repo }}\
+                    /commits/{{ release.version }}
         {% endif -%}
     {% else -%}
         [unreleased]: https://github.com/{{ remote.github.owner }}/{{ remote.github.repo }}\
@@ -83,7 +82,7 @@ postprocessors = [
 # render body even when there are no releases to process
 # render_always = true
 # output file path
-output = "CHANGELOG.md"
+# output = CHANGELOG.md
 
 [git]
 # parse the commits based on https://www.conventionalcommits.org

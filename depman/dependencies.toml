@@ -1,7 +1,3 @@
 [nuitron]
 git.url = "https://github.com/rayanamal/nuitron.git"
 git.commit = "1759591"
-
-# [depman-v002]
-# git.url = "https://github.com/depman-org/depman.git"
-# git.commit = "dcc0bae0"
