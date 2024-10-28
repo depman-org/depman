@@ -1,0 +1,41 @@
+name: Commitlint
+
+on: [push, pull_request]
+
+jobs:
+  commitlint:
+    defaults:
+      run:
+        working-directory: .github/ci/commitlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          
+      - name: Enable corepack (install yarn)
+        run: |
+          corepack enable
+          echo "YARN_CACHE_FOLDER=$(yarn config get cacheFolder)" >> $GITHUB_ENV
+
+      - uses: actions/cache@v4
+        env:
+          COMMITLINT_DIR: .github/ci/commitlint
+        with:
+          key: ${{ runner.os }}-yarn-${{ hashFiles(format('{0}/yarn.lock', env.COMMITLINT_DIR)) }}
+          path: ${{ env.YARN_CACHE_FOLDER }}/
+
+      - name: Install commitlint
+        run: yarn install --immutable
+      
+      - name: Validate current commit (last commit) with commitlint
+        if: github.event_name == 'push'
+        run: yarn commitlint --last --verbose
+        
+      - name: Validate PR commits with commitlint
+        if: github.event_name == 'pull_request'
+        run: yarn commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose

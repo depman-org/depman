@@ -30,5 +30,5 @@ The following is a list of items to be completed before the v1 release. Items ar
 -  Nix packages and flakes accepted as a dependency type.
 	- The reason why Nix and Depman packages are allowed as recursive dependencies is because only these two guarantee build inputs remain the same, by either locking inputs & using a purely functional DSL or locking both inputs and the outputs.
 -  Full idempotency.
-	- We are probably already fully idempotent.
+	- We are probably already fully idempotent. Implement tests for it.
 -  Implement the rules in the "Reliable Nu" document.
