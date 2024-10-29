@@ -1,7 +1,7 @@
 #!/usr/bin/env -S nu --no-config-file --no-history
 
 const NAME = 'Depman'
-const VERSION = '0.1.0'
+const VERSION = '0.2.0'
 const NU_VERSION = '0.98.0'
 const GITHUB_URL: string = 'https://github.com/rayanamal/depman'
 const CLI_NAME = $NAME | str downcase

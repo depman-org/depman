@@ -80,6 +80,7 @@ A new Github release will be created from the current git HEAD pointing to this 
     chlog --use-branch-tags --output $changelog_path e>| ignore
     git add $changelog_path
     git commit -m $"chore\(release\): prepare for release ($new_tag)"
+    git push
     git tag $new_tag
     git push origin --tags
 

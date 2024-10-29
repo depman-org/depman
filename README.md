@@ -41,9 +41,9 @@ my-project/
   depman/
     config.toml
     dependencies.toml
-	dependencies.lock
+    dependencies.lock
     commands.nu
-	artifacts/
+    artifacts/
     cache/
 ```
 
