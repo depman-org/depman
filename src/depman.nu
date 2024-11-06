@@ -159,7 +159,7 @@ def main [
 			}
 		}
 		| run {|deps|
-			say -i 1 $"Running the command ($command | ft command)...\n"
+			say -i 1 $"Running the command ($command | ft command)..."
 			let dependency_dirs = $deps | select name dir | transpose -rd
 			let source_dir: path = $dir | path parse | get parent | err-if ($in == null) $"You can't use the system root directory as the ($NAME) directory."
 			let out_dir: path = (
@@ -239,6 +239,7 @@ def main [
 						error $in
 					} else { exit 1 }
 				} else {
+					say ""
 					say -i 1 $"Successfully ran ($command | ft command)."
 					if ($out_dir | path exists) and (ls $out_dir | is-not-empty) {
 						say -i 1 $"Command artifacts are located in ($out_dir | ft dir)."

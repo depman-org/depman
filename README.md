@@ -1,5 +1,5 @@
 ### Caution!
-This project is in alpha stage, which means most of the features described here are not implemented yet. That said, Depman is self-hosted today and uses itself for its own development, build and testing, all under 600 lines of code.
+This project is in alpha stage, which means **most** of the features described in *all* following parts of this document are not implemented yet. That said, Depman is self-hosted today and uses itself for its own development, build, testing, and release, all in ~600 lines of code.
 
 ## What is Depman?
 
