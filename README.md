@@ -1,5 +1,12 @@
+### Status Update (April 2025)
+
+This project is not actively developed, and it's not compatible with current versions of Nushell. There are no longer any real world use cases for this project (known to me), which existing other tools aren't more suitable fo. If you are interested in using this project, please contact me.
+
+Much of the codebase was focused around patching and working around the various deficiencies, lacking features and bugs in Nushell. I estimate that if the project was ported to Nushell v0.103.0, up to half of the codebase could be thrown away.
+
 ### Caution!
 This project is in alpha stage, which means **most** of the features described in *all* following parts of this document are not implemented yet. That said, Depman is self-hosted today and uses itself for its own development, build, testing, and release, all in ~600 lines of code.
+
 
 ## What is Depman?
 
